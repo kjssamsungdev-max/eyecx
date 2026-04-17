@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EyeCX - Distribution Infrastructure for Developers</title>
+    <meta name="description" content="You don't have a product problem. You have a distribution problem. Build a domain network that drives traffic to your products.">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="EyeCX - Distribution Infrastructure for Developers">
+    <meta property="og:description" content="Stop renting attention. Start owning distribution. Build a domain network in 60 days.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://eyecx.com">
+    <meta property="og:image" content="https://eyecx.com/assets/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="EyeCX - Expired Domain Intelligence">
+    <meta name="twitter:description" content="Screen 500K+ domains daily. Zero manual steps.">
+    <meta name="twitter:image" content="https://eyecx.com/assets/og-image.png">
+    
+    <!-- Theme -->
+    <meta name="theme-color" content="#0a0a0f">
+    <meta name="msapplication-TileColor" content="#0a0a0f">
+    
+    <link rel="canonical" href="https://eyecx.com">
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --surface: #12121a;
+            --border: #1e1e2e;
+            --text: #e4e4e7;
+            --muted: #71717a;
+            --accent: #22d3ee;
+            --accent-dim: #0891b2;
+            --gold: #fbbf24;
+            --diamond: #a78bfa;
+            --success: #34d399;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+        
+        header {
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .header-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent), var(--diamond));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .logo-icon svg {
+            width: 24px;
+            height: 24px;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            list-style: none;
+        }
+        
+        .nav-links a {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+        
+        .nav-links a:hover { color: var(--text); }
+        
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+            font-size: 0.95rem;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: var(--bg);
+        }
+        
+        .btn-primary:hover { background: var(--accent-dim); }
+        
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        
+        .btn-outline:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        
+        .hero {
+            padding: 100px 0 80px;
+            text-align: center;
+        }
+        
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 6px 16px;
+            border-radius: 100px;
+            font-size: 0.85rem;
+            color: var(--muted);
+            margin-bottom: 24px;
+        }
+        
+        .hero-badge .dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        h1 {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 24px;
+        }
+        
+        .gradient-text {
+            background: linear-gradient(135deg, var(--accent), var(--diamond));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero-subtitle {
+            font-size: 1.25rem;
+            color: var(--muted);
+            max-width: 600px;
+            margin: 0 auto 40px;
+        }
+        
+        .hero-cta {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .launch-countdown {
+            margin-top: 48px;
+            text-align: center;
+        }
+        
+        .countdown-label {
+            font-size: 0.9rem;
+            color: var(--muted);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        
+        .countdown-timer {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+        }
+        
+        .countdown-unit {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 24px;
+            min-width: 80px;
+        }
+        
+        .countdown-unit span {
+            display: block;
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        
+        .countdown-unit small {
+            font-size: 0.75rem;
+            color: var(--muted);
+            text-transform: uppercase;
+        }
+        
+        /* Portfolio Showcase */
+        .portfolio {
+            padding: 80px 0;
+            background: var(--surface);
+        }
+        
+        .portfolio-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-top: 40px;
+        }
+        
+        .portfolio-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+        
+        .portfolio-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+        
+        .portfolio-card.prime {
+            border-color: var(--diamond);
+            background: linear-gradient(135deg, rgba(167,139,250,0.05), rgba(34,211,238,0.05));
+        }
+        
+        .portfolio-domain {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .portfolio-domain .badge {
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+        
+        .badge-prime {
+            background: rgba(167,139,250,0.2);
+            color: var(--diamond);
+        }
+        
+        .badge-live {
+            background: rgba(52,211,153,0.2);
+            color: var(--success);
+        }
+        
+        .portfolio-meta {
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+        
+        .portfolio-category {
+            display: inline-block;
+            font-size: 0.75rem;
+            color: var(--accent);
+            background: rgba(34,211,238,0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+        
+        .portfolio-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-top: 40px;
+            padding: 24px;
+            background: var(--bg);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+        }
+        
+        .portfolio-stat {
+            text-align: center;
+        }
+        
+        .portfolio-stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        
+        .portfolio-stat-label {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+        
+        /* Waitlist */
+        .waitlist {
+            padding: 100px 0;
+            text-align: center;
+        }
+        
+        .waitlist-form {
+            max-width: 500px;
+            margin: 40px auto 0;
+            display: flex;
+            gap: 12px;
+        }
+        
+        .waitlist-input {
+            flex: 1;
+            padding: 14px 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+            font-size: 1rem;
+        }
+        
+        .waitlist-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        
+        .waitlist-input::placeholder {
+            color: var(--muted);
+        }
+        
+        .waitlist-count {
+            margin-top: 16px;
+            font-size: 0.9rem;
+            color: var(--muted);
+        }
+        
+        .waitlist-count strong {
+            color: var(--accent);
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            padding: 60px 0;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .stat { text-align: center; }
+        
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+        
+        .features { padding: 80px 0; }
+        
+        .section-title {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        
+        .section-subtitle {
+            text-align: center;
+            color: var(--muted);
+            margin-bottom: 60px;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+        
+        .feature-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            transition: border-color 0.2s;
+        }
+        
+        .feature-card:hover { border-color: var(--accent-dim); }
+        
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--accent), var(--diamond));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        
+        .feature-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .feature-desc {
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+        
+        .pipeline {
+            padding: 80px 0;
+            background: var(--surface);
+        }
+        
+        .pipeline-steps {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-top: 60px;
+            position: relative;
+        }
+        
+        .pipeline-steps::before {
+            content: '';
+            position: absolute;
+            top: 30px;
+            left: 60px;
+            right: 60px;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent), var(--diamond));
+            z-index: 0;
+        }
+        
+        .step {
+            flex: 1;
+            text-align: center;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .step-number {
+            width: 60px;
+            height: 60px;
+            background: var(--bg);
+            border: 2px solid var(--accent);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 0 auto 16px;
+            color: var(--accent);
+        }
+        
+        .step-title { font-weight: 600; margin-bottom: 8px; }
+        .step-desc { font-size: 0.85rem; color: var(--muted); }
+        
+        .pricing { padding: 80px 0; }
+        
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            margin-top: 60px;
+        }
+        
+        .price-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 40px 32px;
+            position: relative;
+        }
+        
+        .price-card.featured {
+            border-color: var(--accent);
+            transform: scale(1.05);
+        }
+        
+        .price-card.featured::before {
+            content: 'Most Popular';
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--accent);
+            color: var(--bg);
+            padding: 4px 16px;
+            border-radius: 100px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .price-tier { font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; }
+        .price-value { font-size: 3rem; font-weight: 700; }
+        .price-period { color: var(--muted); font-size: 0.9rem; }
+        
+        .price-features { list-style: none; margin: 32px 0; }
+        
+        .price-features li {
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.95rem;
+        }
+        
+        .price-features li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: bold;
+        }
+        
+        .tiers { padding: 80px 0; background: var(--surface); }
+        
+        .tier-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 40px;
+        }
+        
+        .tier-table th, .tier-table td {
+            padding: 20px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .tier-table th {
+            color: var(--muted);
+            font-weight: 500;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .tier-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .tier-diamond { background: rgba(167, 139, 250, 0.2); color: var(--diamond); }
+        .tier-gold { background: rgba(251, 191, 36, 0.2); color: var(--gold); }
+        .tier-silver { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+        
+        .cta { padding: 100px 0; text-align: center; }
+        .cta h2 { font-size: 2.5rem; margin-bottom: 16px; }
+        .cta p { color: var(--muted); margin-bottom: 40px; font-size: 1.1rem; }
+        
+        footer {
+            padding: 40px 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        
+        footer a { color: var(--muted); text-decoration: none; }
+        footer a:hover { color: var(--accent); }
+        
+        @media (max-width: 900px) {
+            .features-grid, .pricing-grid { grid-template-columns: 1fr; }
+            .stats { grid-template-columns: repeat(2, 1fr); }
+            .pipeline-steps { flex-direction: column; align-items: center; }
+            .pipeline-steps::before { display: none; }
+            .price-card.featured { transform: none; }
+            .nav-links { display: none; }
+            .countdown-timer { gap: 12px; }
+            .countdown-unit { padding: 12px 16px; min-width: 60px; }
+            .countdown-unit span { font-size: 1.5rem; }
+            .portfolio-stats { grid-template-columns: repeat(2, 1fr); }
+            .waitlist-form { flex-direction: column; }
+            .waitlist-input, .waitlist-form .btn { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container header-inner">
+            <a href="/" class="logo">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <ellipse cx="16" cy="16" rx="12" ry="8" stroke="#0a0a0f" stroke-width="2.5"/>
+                        <circle cx="16" cy="16" r="5" fill="#0a0a0f" opacity="0.3"/>
+                        <circle cx="16" cy="16" r="3" fill="#0a0a0f"/>
+                        <circle cx="14.5" cy="14.5" r="1" fill="#fff"/>
+                    </svg>
+                </div>
+                EyeCX
+            </a>
+            <nav>
+                <ul class="nav-links">
+                    <li><a href="#portfolio">Portfolio</a></li>
+                    <li><a href="#features">How It Works</a></li>
+                    <li><a href="#pricing">Pricing</a></li>
+                    <li><a href="#waitlist">Waitlist</a></li>
+                </ul>
+            </nav>
+            <a href="https://github.com/kjssamsungdev-max/eyecx" class="btn btn-outline">GitHub</a>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <div class="hero-badge">
+                    <span class="dot"></span>
+                    <span id="domain-count">42</span> distribution channels live
+                </div>
+                <h1>You don't have a product problem.<br>You have a <span class="gradient-text">distribution</span> problem.</h1>
+                <p class="hero-subtitle">Expired domains are distribution infrastructure hiding in plain sight. We built a 200-domain network in 60 days. Now the tool is open.</p>
+                <div class="hero-cta">
+                    <a href="#waitlist" class="btn btn-primary">Join Waitlist →</a>
+                    <a href="#portfolio" class="btn btn-outline">See Our Network</a>
+                </div>
+                <div class="launch-countdown">
+                    <div class="countdown-label">Subscriptions open in</div>
+                    <div class="countdown-timer" id="countdown">
+                        <div class="countdown-unit"><span id="days">--</span><small>days</small></div>
+                        <div class="countdown-unit"><span id="hours">--</span><small>hrs</small></div>
+                        <div class="countdown-unit"><span id="mins">--</span><small>min</small></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="stats">
+            <div class="container" style="display: contents;">
+                <div class="stat"><div class="stat-value">$500</div><div class="stat-label">Cost per customer (Google Ads)</div></div>
+                <div class="stat"><div class="stat-value">$15</div><div class="stat-label">Cost per domain (our way)</div></div>
+                <div class="stat"><div class="stat-value">6x</div><div class="stat-label">ROI in year one</div></div>
+                <div class="stat"><div class="stat-value" id="stat-domains">42</div><div class="stat-label">Domains in our network</div></div>
+            </div>
+        </section>
+
+        <section id="features" class="features">
+            <div class="container">
+                <h2 class="section-title">Five Distribution Strategies</h2>
+                <p class="section-subtitle">Stop renting attention. Start owning distribution.</p>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="2" y1="12" x2="22" y2="12"></line>
+                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Micro-Site Network</h3>
+                        <p class="feature-desc">Own the content that leads to your product. Build SEO-optimized sites in your niche that naturally funnel to your app.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Keyword Arbitrage</h3>
+                        <p class="feature-desc">Rank instantly for high-intent searches. Exact-match domains bypass the 12-month SEO grind.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Authority Redirects</h3>
+                        <p class="feature-desc">301 redirect aged domains with backlinks to your main site. Instant authority boost.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Audience Pre-Building</h3>
+                        <p class="feature-desc">Build an email list before you launch. Acquire domains with existing traffic in your niche.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
+                                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Comparison Sites</h3>
+                        <p class="feature-desc">Control the narrative when users compare options. Own "best X alternatives" pages where your product wins.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <line x1="3" y1="9" x2="21" y2="9"></line>
+                                <line x1="9" y1="21" x2="9" y2="9"></line>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Internal Link Network</h3>
+                        <p class="feature-desc">Connect your domains strategically. Cross-link for compound SEO effects across your entire portfolio.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="pipeline" class="pipeline">
+            <div class="container">
+                <h2 class="section-title">The Distribution Pipeline</h2>
+                <p class="section-subtitle">From expired domain to traffic channel</p>
+                <div class="pipeline-steps">
+                    <div class="step"><div class="step-number">1</div><div class="step-title">Screen</div><div class="step-desc">500K domains daily</div></div>
+                    <div class="step"><div class="step-number">2</div><div class="step-title">Score</div><div class="step-desc">Distribution value</div></div>
+                    <div class="step"><div class="step-number">3</div><div class="step-title">Acquire</div><div class="step-desc">$10-50/domain</div></div>
+                    <div class="step"><div class="step-number">4</div><div class="step-title">Deploy</div><div class="step-desc">Content or redirect</div></div>
+                    <div class="step"><div class="step-number">5</div><div class="step-title">Connect</div><div class="step-desc">Link to your products</div></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="portfolio" class="portfolio">
+            <div class="container">
+                <h2 class="section-title">Our Distribution Network</h2>
+                <p class="section-subtitle">Every domain is a channel to our products</p>
+                
+                <div class="portfolio-stats">
+                    <div class="portfolio-stat">
+                        <div class="portfolio-stat-value" id="pf-total">42</div>
+                        <div class="portfolio-stat-label">Distribution Channels</div>
+                    </div>
+                    <div class="portfolio-stat">
+                        <div class="portfolio-stat-value" id="pf-live">32</div>
+                        <div class="portfolio-stat-label">Driving Traffic</div>
+                    </div>
+                    <div class="portfolio-stat">
+                        <div class="portfolio-stat-value" id="pf-niches">18</div>
+                        <div class="portfolio-stat-label">Niches Covered</div>
+                    </div>
+                    <div class="portfolio-stat">
+                        <div class="portfolio-stat-value">200</div>
+                        <div class="portfolio-stat-label">Day 60 Target</div>
+                    </div>
+                </div>
+                
+                <div class="portfolio-grid">
+                    <!-- Tech / SaaS -->
+                    <div class="portfolio-card prime">
+                        <div class="portfolio-domain">doomticker.com <span class="badge badge-prime">Prime</span> <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">Threat intelligence platform</div>
+                        <div class="portfolio-category">Tech / Security</div>
+                    </div>
+                    <div class="portfolio-card prime">
+                        <div class="portfolio-domain">intelflag.com <span class="badge badge-prime">Prime</span> <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">Geopolitical simulation</div>
+                        <div class="portfolio-category">Tech / Gaming</div>
+                    </div>
+                    <div class="portfolio-card prime">
+                        <div class="portfolio-domain">flxgate.com <span class="badge badge-prime">Prime</span> <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">AI monetization gateway</div>
+                        <div class="portfolio-category">SaaS / AI</div>
+                    </div>
+                    <div class="portfolio-card">
+                        <div class="portfolio-domain">5sprints.com <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">Chrome extension tracking</div>
+                        <div class="portfolio-category">Developer Tools</div>
+                    </div>
+                    <div class="portfolio-card">
+                        <div class="portfolio-domain">5sprints.app <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">5sprints app variant</div>
+                        <div class="portfolio-category">Developer Tools</div>
+                    </div>
+                    <div class="portfolio-card">
+                        <div class="portfolio-domain">5sprints.dev <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">5sprints dev variant</div>
+                        <div class="portfolio-category">Developer Tools</div>
+                    </div>
+                    <div class="portfolio-card">
+                        <div class="portfolio-domain">clawsap.com <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">ClawSup platform</div>
+                        <div class="portfolio-category">SaaS</div>
+                    </div>
+                    <div class="portfolio-card">
+                        <div class="portfolio-domain">clawsap.app <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">ClawSup app variant</div>
+                        <div class="portfolio-category">SaaS</div>
+                    </div>
+                    <div class="portfolio-card">
+                        <div class="portfolio-domain">clawsap.dev <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">ClawSup dev variant</div>
+                        <div class="portfolio-category">SaaS</div>
+                    </div>
+                    
+                    <!-- Faith / Creative -->
+                    <div class="portfolio-card prime">
+                        <div class="portfolio-domain">lordsguide.com <span class="badge badge-prime">Prime</span> <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">AI-powered faith platform</div>
+                        <div class="portfolio-category">Faith / Spirituality</div>
+                    </div>
+                    <div class="portfolio-card">
+                        <div class="portfolio-domain">mofoex.com <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">MoFoEx platform</div>
+                        <div class="portfolio-category">Finance</div>
+                    </div>
+                    
+                    <!-- Premium / Production -->
+                    <div class="portfolio-card">
+                        <div class="portfolio-domain">888.productions <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">Premium production domain</div>
+                        <div class="portfolio-category">Media / Production</div>
+                    </div>
+                    
+                    <!-- This Platform -->
+                    <div class="portfolio-card prime">
+                        <div class="portfolio-domain">eyecx.com <span class="badge badge-prime">Prime</span> <span class="badge badge-live">Live</span></div>
+                        <div class="portfolio-meta">You're looking at it</div>
+                        <div class="portfolio-category">Domain Intel</div>
+                    </div>
+                </div>
+                
+                <p style="text-align: center; margin-top: 32px; color: var(--muted); font-size: 0.9rem;">
+                    + Partner portfolio: 20+ additional domains across 10 niches
+                </p>
+            </div>
+        </section>
+
+        <section id="pricing" class="pricing">
+            <div class="container">
+                <h2 class="section-title">Build Your Distribution Network</h2>
+                <p class="section-subtitle">Daily domains scored for distribution value</p>
+                <div class="pricing-grid">
+                    <div class="price-card">
+                        <div class="price-tier">Side Project</div>
+                        <div class="price-value">$19<span class="price-period">/mo</span></div>
+                        <ul class="price-features">
+                            <li>50 domains/day</li>
+                            <li>Distribution score included</li>
+                            <li>Keyword match alerts</li>
+                            <li>Email delivery</li>
+                        </ul>
+                        <a href="#waitlist" class="btn btn-outline" style="width: 100%;">Join Waitlist</a>
+                    </div>
+                    <div class="price-card featured">
+                        <div class="price-tier">Startup</div>
+                        <div class="price-value">$49<span class="price-period">/mo</span></div>
+                        <ul class="price-features">
+                            <li>200 domains/day</li>
+                            <li>Niche filtering</li>
+                            <li>Backlink data</li>
+                            <li>API access</li>
+                            <li>Slack alerts</li>
+                        </ul>
+                        <a href="#waitlist" class="btn btn-primary" style="width: 100%;">Join Waitlist</a>
+                    </div>
+                    <div class="price-card">
+                        <div class="price-tier">Agency</div>
+                        <div class="price-value">$99<span class="price-period">/mo</span></div>
+                        <ul class="price-features">
+                            <li>500 domains/day</li>
+                            <li>Multi-product mapping</li>
+                            <li>Authority domains first</li>
+                            <li>Webhook integration</li>
+                            <li>White-label reports</li>
+                        </ul>
+                        <a href="#waitlist" class="btn btn-outline" style="width: 100%;">Join Waitlist</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="tiers" class="tiers">
+            <div class="container">
+                <h2 class="section-title">Domain Tiers</h2>
+                <p class="section-subtitle">How we classify expired domains</p>
+                <table class="tier-table">
+                    <thead><tr><th>Tier</th><th>Score</th><th>Est. Value</th><th>Action</th></tr></thead>
+                    <tbody>
+                        <tr><td><span class="tier-badge tier-diamond">💎 Diamond</span></td><td>85-100</td><td>$500 - $5,000</td><td>Auto-purchase</td></tr>
+                        <tr><td><span class="tier-badge tier-gold">🥇 Gold</span></td><td>70-84</td><td>$150 - $500</td><td>Purchase + restore</td></tr>
+                        <tr><td><span class="tier-badge tier-silver">🥈 Silver</span></td><td>55-69</td><td>$50 - $150</td><td>Subscription delivery</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="waitlist" class="waitlist">
+            <div class="container">
+                <h2>Stop renting attention.<br>Start owning <span class="gradient-text">distribution</span>.</h2>
+                <p style="color: var(--muted); font-size: 1.1rem;">Join the waitlist. We open after we hit 200 domains in our own network.</p>
+                
+                <form class="waitlist-form" action="https://formspree.io/f/YOUR_FORM_ID" method="POST">
+                    <input type="email" name="email" class="waitlist-input" placeholder="Enter your email" required>
+                    <button type="submit" class="btn btn-primary">Join Waitlist</button>
+                </form>
+                
+                <p class="waitlist-count"><strong id="waitlist-count">127</strong> developers building distribution networks</p>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>© 2026 EyeCX · <a href="https://github.com/kjssamsungdev-max/eyecx">GitHub</a> · <a href="mailto:hello@eyecx.com">Contact</a> · Built by <a href="https://kjs.productions">KJS</a></p>
+        </div>
+    </footer>
+    
+    <script>
+        // Countdown to Day 60 (June 15, 2026)
+        const launchDate = new Date('2026-06-15T00:00:00');
+        
+        function updateCountdown() {
+            const now = new Date();
+            const diff = launchDate - now;
+            
+            if (diff <= 0) {
+                document.getElementById('countdown').innerHTML = '<div style="color: var(--success); font-size: 1.5rem; font-weight: 600;">🎉 Now Live!</div>';
+                return;
+            }
+            
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            
+            document.getElementById('days').textContent = days;
+            document.getElementById('hours').textContent = hours;
+            document.getElementById('mins').textContent = mins;
+        }
+        
+        updateCountdown();
+        setInterval(updateCountdown, 60000);
+        
+        // Simulated live counter (replace with real API call)
+        const baseCount = 42; // Current domains
+        const targetCount = 200;
+        const daysElapsed = Math.floor((new Date() - new Date('2026-04-16')) / (1000 * 60 * 60 * 24));
+        const currentCount = Math.min(baseCount + (daysElapsed * 2), targetCount);
+        
+        document.getElementById('domain-count').textContent = currentCount;
+        document.getElementById('stat-domains').textContent = currentCount;
+        document.getElementById('pf-total').textContent = currentCount;
+        
+        // Developed sites (approx 80% of total)
+        const developedCount = Math.floor(currentCount * 0.8);
+        document.getElementById('stat-developed').textContent = developedCount;
+        document.getElementById('pf-live').textContent = developedCount;
+    </script>
+</body>
+</html>

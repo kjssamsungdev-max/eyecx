@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#12121a"/>
+      <stop offset="100%" style="stop-color:#0a0a0f"/>
+    </linearGradient>
+    <linearGradient id="eyeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22d3ee"/>
+      <stop offset="100%" style="stop-color:#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="pupilGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0891b2"/>
+      <stop offset="100%" style="stop-color:#7c3aed"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bgGrad)"/>
+  
+  <!-- Outer glow -->
+  <ellipse cx="256" cy="256" rx="160" ry="110" fill="url(#eyeGrad)" opacity="0.1"/>
+  
+  <!-- Eye shape -->
+  <ellipse cx="256" cy="256" rx="150" ry="100" fill="none" stroke="url(#eyeGrad)" stroke-width="12"/>
+  
+  <!-- Iris outer -->
+  <circle cx="256" cy="256" r="70" fill="url(#eyeGrad)" opacity="0.25"/>
+  <circle cx="256" cy="256" r="70" fill="none" stroke="url(#eyeGrad)" stroke-width="6"/>
+  
+  <!-- Iris inner ring -->
+  <circle cx="256" cy="256" r="50" fill="none" stroke="url(#eyeGrad)" stroke-width="2" opacity="0.5"/>
+  
+  <!-- Pupil -->
+  <circle cx="256" cy="256" r="35" fill="url(#pupilGrad)"/>
+  
+  <!-- Highlight -->
+  <circle cx="238" cy="238" r="12" fill="#fff" opacity="0.85"/>
+  <circle cx="270" cy="268" r="5" fill="#fff" opacity="0.4"/>
+  
+  <!-- Scan lines - horizontal -->
+  <line x1="115" y1="256" x2="175" y2="256" stroke="#22d3ee" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  <line x1="337" y1="256" x2="397" y2="256" stroke="#a78bfa" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  
+  <!-- Scan lines - vertical -->
+  <line x1="256" y1="160" x2="256" y2="190" stroke="#22d3ee" stroke-width="6" stroke-linecap="round" opacity="0.5"/>
+  <line x1="256" y1="322" x2="256" y2="352" stroke="#a78bfa" stroke-width="6" stroke-linecap="round" opacity="0.5"/>
+  
+  <!-- Corner brackets (data/scanning aesthetic) -->
+  <path d="M80 140 L80 100 L120 100" fill="none" stroke="#22d3ee" stroke-width="4" opacity="0.4"/>
+  <path d="M432 140 L432 100 L392 100" fill="none" stroke="#a78bfa" stroke-width="4" opacity="0.4"/>
+  <path d="M80 372 L80 412 L120 412" fill="none" stroke="#22d3ee" stroke-width="4" opacity="0.4"/>
+  <path d="M432 372 L432 412 L392 412" fill="none" stroke="#a78bfa" stroke-width="4" opacity="0.4"/>
+</svg>

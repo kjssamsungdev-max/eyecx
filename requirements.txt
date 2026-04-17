@@ -1,0 +1,22 @@
+# Domain Hunter v3.0 Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core async HTTP client
+aiohttp>=3.9.0
+
+# Data handling
+pandas>=2.0.0
+
+# Progress bars (optional, for CLI mode)
+tqdm>=4.65.0
+
+# Browser automation for ExpiredDomains.net scraping
+# Install separately: playwright install
+playwright>=1.40.0
+
+# HTML parsing (fallback)
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Type checking (dev)
+# mypy>=1.0.0

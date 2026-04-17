@@ -1,0 +1,72 @@
+# Domain Hunter Seed Domains
+# These seeds will be expanded via backlink crawling
+# Target: Each seed yields 4,000-10,000 related expired domains
+#
+# Categories: Tech, SaaS, Marketing, Finance, E-commerce, Gaming, Crypto
+
+# Tech / Dev
+techcrunch.com
+producthunt.com
+indiehackers.com
+dev.to
+hackernews.com
+stackoverflow.com
+github.com
+gitlab.com
+medium.com
+substack.com
+
+# SaaS / Tools
+zapier.com
+notion.so
+airtable.com
+calendly.com
+typeform.com
+intercom.com
+hubspot.com
+mailchimp.com
+convertkit.com
+gumroad.com
+
+# Marketing / SEO
+moz.com
+ahrefs.com
+semrush.com
+backlinko.com
+neilpatel.com
+contentmarketinginstitute.com
+copyblogger.com
+buffer.com
+hootsuite.com
+later.com
+
+# E-commerce
+shopify.com
+bigcommerce.com
+woocommerce.com
+oberlo.com
+printful.com
+dropship.io
+aliexpress.com
+etsy.com
+amazon.com
+ebay.com
+
+# Finance / Crypto
+coindesk.com
+cointelegraph.com
+decrypt.co
+defipulse.com
+dune.com
+investopedia.com
+fool.com
+seekingalpha.com
+bloomberg.com
+forbes.com
+
+# Gaming / Entertainment
+ign.com
+gamespot.com
+kotaku.com
+polygon.com
+twitch.tv

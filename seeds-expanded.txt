@@ -1,0 +1,527 @@
+# EyeCX Seed Domains - Expanded for 120 Domain Acquisition
+# Target: 120 domains in 60 days (2/day average)
+# Strategy: 24 prime earners (20%), 96 portfolio/flip domains
+#
+# CURRENT COVERAGE: Tech, SaaS, Marketing, Finance, E-commerce, Gaming, Crypto
+# 
+# MISSING HIGH-VALUE NICHES IDENTIFIED:
+# ─────────────────────────────────────────────────────────────
+# 1. Health & Wellness ($700B industry) - MASSIVE affiliate potential
+# 2. Pet Care ($70B US market) - High emotion = high conversion
+# 3. Home Decor ($862B global) - $100-200 commissions
+# 4. Travel & Luxury ($5.78B cruise alone) - 50% TripAdvisor commissions
+# 5. Education/Online Courses - E-learning $15K/mo avg affiliate
+# 6. Beauty/Skincare ($24B US) - Recurring purchases
+# 7. Outdoor/Adventure Gear - 8% commissions, passionate buyers
+# 8. Sustainable/Eco - Rising trend, premium pricing
+# 9. AI Tools (.ai domains selling 20x in 2024) - Tech gold rush
+# 10. Legal/Insurance - High CPC, high commissions
+# 11. Real Estate - Massive transaction values
+# 12. Parenting/Baby - Emotional purchases, recurring
+# 13. Food/Nutrition/Meal Delivery - $529B organic by 2032
+# 14. Fitness Equipment - Home gym boom continues
+# 15. Mental Health/Therapy - Growing awareness, high value
+# ─────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════
+# EXISTING SEEDS (Keep - proven volume)
+# ══════════════════════════════════════════════════════════════
+
+# Tech / Dev
+techcrunch.com
+producthunt.com
+indiehackers.com
+dev.to
+hackernews.com
+stackoverflow.com
+github.com
+medium.com
+
+# SaaS / Tools
+zapier.com
+notion.so
+airtable.com
+hubspot.com
+mailchimp.com
+gumroad.com
+
+# Marketing / SEO
+moz.com
+ahrefs.com
+semrush.com
+backlinko.com
+neilpatel.com
+
+# E-commerce
+shopify.com
+woocommerce.com
+etsy.com
+amazon.com
+
+# Finance / Crypto
+coindesk.com
+investopedia.com
+bloomberg.com
+forbes.com
+
+# Gaming
+ign.com
+polygon.com
+twitch.tv
+
+# ══════════════════════════════════════════════════════════════
+# NEW HIGH-VALUE NICHES (Add these)
+# ══════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────
+# 1. HEALTH & WELLNESS ($700B - HIGHEST AFFILIATE POTENTIAL)
+# ─────────────────────────────────────────────────────────────
+healthline.com
+webmd.com
+mayoclinic.org
+mindbodygreen.com
+wellandgood.com
+prevention.com
+everydayhealth.com
+health.com
+
+# ─────────────────────────────────────────────────────────────
+# 2. FITNESS & HOME GYM (Post-COVID boom continues)
+# ─────────────────────────────────────────────────────────────
+menshealth.com
+womenshealthmag.com
+bodybuilding.com
+muscleandstrength.com
+t-nation.com
+nerdfitness.com
+peloton.com
+mirror.co
+
+# ─────────────────────────────────────────────────────────────
+# 3. PET CARE ($70B US - High emotion = high conversion)
+# ─────────────────────────────────────────────────────────────
+akc.org
+petmd.com
+chewy.com
+rover.com
+barkbox.com
+dogfoodadvisor.com
+catster.com
+thepetcollective.com
+
+# ─────────────────────────────────────────────────────────────
+# 4. HOME DECOR & FURNITURE ($862B - $100-200 commissions)
+# ─────────────────────────────────────────────────────────────
+houzz.com
+apartmenttherapy.com
+housebeautiful.com
+architecturaldigest.com
+wayfair.com
+westelm.com
+potterybarn.com
+cb2.com
+
+# ─────────────────────────────────────────────────────────────
+# 5. TRAVEL & LUXURY (50%+ hotel commissions)
+# ─────────────────────────────────────────────────────────────
+tripadvisor.com
+lonelyplanet.com
+nomadicmatt.com
+thepointsguy.com
+gadventures.com
+afar.com
+cntraveler.com
+cruisecritic.com
+
+# ─────────────────────────────────────────────────────────────
+# 6. BEAUTY & SKINCARE ($24B US - Recurring purchases)
+# ─────────────────────────────────────────────────────────────
+sephora.com
+ulta.com
+allure.com
+byrdie.com
+thecut.com
+beautylish.com
+intothegloss.com
+paulaschoice.com
+
+# ─────────────────────────────────────────────────────────────
+# 7. EDUCATION & ONLINE COURSES ($15K/mo avg affiliate)
+# ─────────────────────────────────────────────────────────────
+coursera.org
+udemy.com
+skillshare.com
+masterclass.com
+edx.org
+khanacademy.org
+codecademy.com
+duolingo.com
+
+# ─────────────────────────────────────────────────────────────
+# 8. OUTDOOR & ADVENTURE (Passionate buyers, 8% commissions)
+# ─────────────────────────────────────────────────────────────
+rei.com
+backcountry.com
+outsideonline.com
+switchbacktravel.com
+gearjunkie.com
+trailrunnermag.com
+climbing.com
+bikemag.com
+
+# ─────────────────────────────────────────────────────────────
+# 9. SUSTAINABLE / ECO (Premium pricing, rising trend)
+# ─────────────────────────────────────────────────────────────
+treehugger.com
+earthhero.com
+thegoodtrade.com
+sustainablejungle.com
+ecocult.com
+greenmatters.com
+
+# ─────────────────────────────────────────────────────────────
+# 10. AI TOOLS & PRODUCTIVITY (.ai domains 20x growth)
+# ─────────────────────────────────────────────────────────────
+openai.com
+anthropic.com
+huggingface.co
+replicate.com
+jasper.ai
+copy.ai
+midjourney.com
+runway.ml
+
+# ─────────────────────────────────────────────────────────────
+# 11. LEGAL & INSURANCE (High CPC $50+, high commissions)
+# ─────────────────────────────────────────────────────────────
+nolo.com
+avvo.com
+legalzoom.com
+findlaw.com
+policygenius.com
+nerdwallet.com
+insurify.com
+thezebra.com
+
+# ─────────────────────────────────────────────────────────────
+# 12. REAL ESTATE (Massive transaction values)
+# ─────────────────────────────────────────────────────────────
+zillow.com
+realtor.com
+redfin.com
+trulia.com
+biggerpockets.com
+curbed.com
+reonomy.com
+
+# ─────────────────────────────────────────────────────────────
+# 13. PARENTING & BABY (Emotional, recurring purchases)
+# ─────────────────────────────────────────────────────────────
+babycenter.com
+whattoexpect.com
+parents.com
+scarymommy.com
+fatherly.com
+motherly.com
+lucielist.com
+
+# ─────────────────────────────────────────────────────────────
+# 14. FOOD, NUTRITION & MEAL DELIVERY (12.99% CAGR)
+# ─────────────────────────────────────────────────────────────
+allrecipes.com
+seriouseats.com
+bonappetit.com
+epicurious.com
+thekitchn.com
+minimalistbaker.com
+budgetbytes.com
+hellofresh.com
+
+# ─────────────────────────────────────────────────────────────
+# 15. MENTAL HEALTH & THERAPY (Growing, high value)
+# ─────────────────────────────────────────────────────────────
+psychologytoday.com
+betterhelp.com
+talkspace.com
+headspace.com
+calm.com
+verywellmind.com
+therapyden.com
+
+# ─────────────────────────────────────────────────────────────
+# 16. DATING & RELATIONSHIPS (Recurring subscriptions)
+# ─────────────────────────────────────────────────────────────
+match.com
+eharmony.com
+bumble.com
+hinge.co
+gottman.com
+loveisrespect.org
+
+# ─────────────────────────────────────────────────────────────
+# 17. SUPPLEMENTS & VITAMINS (Recurring, high margins)
+# ─────────────────────────────────────────────────────────────
+examine.com
+labdoor.com
+iherb.com
+vitacost.com
+bodybuilding.com
+muscleandstrength.com
+
+# ─────────────────────────────────────────────────────────────
+# 18. VPN & CYBERSECURITY (High CPC, recurring)
+# ─────────────────────────────────────────────────────────────
+vpnmentor.com
+comparitech.com
+privacytools.io
+expressvpn.com
+nordvpn.com
+1password.com
+
+# ══════════════════════════════════════════════════════════════
+# ADDITIONAL OVERLOOKED NICHES
+# ══════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────
+# 19. WEDDINGS & EVENTS ($72B US market, high ticket)
+# ─────────────────────────────────────────────────────────────
+theknot.com
+weddingwire.com
+brides.com
+marthastewartweddings.com
+junebugweddings.com
+stylemepretty.com
+
+# ─────────────────────────────────────────────────────────────
+# 20. SOLAR & RENEWABLE ENERGY (High CPC $30-50, incentives)
+# ─────────────────────────────────────────────────────────────
+energysage.com
+solarreviews.com
+cleanenergy.org
+solarpowerworldonline.com
+greentechmedia.com
+
+# ─────────────────────────────────────────────────────────────
+# 21. SENIOR CARE & AGING (Aging population, high spend)
+# ─────────────────────────────────────────────────────────────
+aarp.org
+caring.com
+aplaceformom.com
+seniorliving.org
+agingcare.com
+
+# ─────────────────────────────────────────────────────────────
+# 22. GOLF (Affluent demographic, $84B industry)
+# ─────────────────────────────────────────────────────────────
+golf.com
+golfdigest.com
+golfwrx.com
+mygolfspy.com
+golfalot.com
+
+# ─────────────────────────────────────────────────────────────
+# 23. HUNTING & FIREARMS (Passionate, high ticket)
+# ─────────────────────────────────────────────────────────────
+fieldandstream.com
+outdoorlife.com
+guns.com
+gunsamerica.com
+thefirearmblog.com
+
+# ─────────────────────────────────────────────────────────────
+# 24. FISHING & BOATING (Affluent hobbyists)
+# ─────────────────────────────────────────────────────────────
+bassmaster.com
+saltstrong.com
+boats.com
+discoverboating.com
+takemefishing.org
+
+# ─────────────────────────────────────────────────────────────
+# 25. RV & CAMPING (Post-COVID boom, high ticket $50K+)
+# ─────────────────────────────────────────────────────────────
+rvshare.com
+campendium.com
+thedyrt.com
+gorving.com
+doityourselfrv.com
+
+# ─────────────────────────────────────────────────────────────
+# 26. MATTRESS & SLEEP (High commissions $100-200)
+# ─────────────────────────────────────────────────────────────
+sleepfoundation.org
+sleepadvisor.org
+mattressclarity.com
+sleepopolis.com
+tuck.com
+
+# ─────────────────────────────────────────────────────────────
+# 27. CBD & CANNABIS (Legal states, high margins)
+# ─────────────────────────────────────────────────────────────
+leafly.com
+weedmaps.com
+hightimes.com
+cannabistech.com
+mjbizdaily.com
+
+# ─────────────────────────────────────────────────────────────
+# 28. COFFEE & SPECIALTY BEVERAGES (Recurring, passionate)
+# ─────────────────────────────────────────────────────────────
+homegrounds.co
+perfectdailygrind.com
+sprudge.com
+baristahustle.com
+drinktrade.com
+
+# ─────────────────────────────────────────────────────────────
+# 29. WINE & SPIRITS (Affluent, club memberships)
+# ─────────────────────────────────────────────────────────────
+winemag.com
+vivino.com
+wine-searcher.com
+distiller.com
+whiskyadvocate.com
+
+# ─────────────────────────────────────────────────────────────
+# 30. SPORTS BETTING & FANTASY (Legal expansion, high CPA)
+# ─────────────────────────────────────────────────────────────
+actionnetwork.com
+thelinesupp.com
+rotowire.com
+fantasypros.com
+bettingpros.com
+
+# ─────────────────────────────────────────────────────────────
+# 31. PHOTOGRAPHY & CAMERA GEAR (Enthusiasts, high ticket)
+# ─────────────────────────────────────────────────────────────
+dpreview.com
+petapixel.com
+fstoppers.com
+shotkit.com
+borrowlenses.com
+
+# ─────────────────────────────────────────────────────────────
+# 32. MUSIC & AUDIO EQUIPMENT (Passionate, recurring)
+# ─────────────────────────────────────────────────────────────
+sweetwater.com
+reverb.com
+soundonsound.com
+gearslutz.com
+musicradar.com
+
+# ─────────────────────────────────────────────────────────────
+# 33. WATCHES & JEWELRY (Luxury, high ticket)
+# ─────────────────────────────────────────────────────────────
+hodinkee.com
+ablogtowatch.com
+chrono24.com
+jckonline.com
+thejewelleryeditor.com
+
+# ─────────────────────────────────────────────────────────────
+# 34. MOTORCYCLES & POWERSPORTS (Passionate, $10K+ tickets)
+# ─────────────────────────────────────────────────────────────
+cycleworld.com
+rideapart.com
+revzilla.com
+motorcyclistonline.com
+webbikeworld.com
+
+# ─────────────────────────────────────────────────────────────
+# 35. DIY & HOME IMPROVEMENT ($500B market)
+# ─────────────────────────────────────────────────────────────
+familyhandyman.com
+thisoldhouse.com
+bobvila.com
+instructables.com
+diynetwork.com
+
+# ─────────────────────────────────────────────────────────────
+# 36. GARDENING & PLANTS (Pandemic boom continues)
+# ─────────────────────────────────────────────────────────────
+gardeningknowhow.com
+thespruce.com
+gardeners.com
+savvygardening.com
+epicgardening.com
+
+# ─────────────────────────────────────────────────────────────
+# 37. AQUARIUM & EXOTIC PETS (Passionate hobbyists)
+# ─────────────────────────────────────────────────────────────
+aquariumcoop.com
+fishlore.com
+reefbuilders.com
+thesprucepets.com
+reptilesweb.com
+
+# ─────────────────────────────────────────────────────────────
+# 38. 3D PRINTING & MAKER (Growing tech niche)
+# ─────────────────────────────────────────────────────────────
+all3dp.com
+3dprint.com
+thingiverse.com
+prusa3d.com
+hackaday.com
+
+# ─────────────────────────────────────────────────────────────
+# 39. DRONES & RC (Tech hobbyists, $40B by 2027)
+# ─────────────────────────────────────────────────────────────
+dronedj.com
+dronelife.com
+rcgroups.com
+rotorbuilds.com
+fpvknowitall.com
+
+# ─────────────────────────────────────────────────────────────
+# 40. PREPPING & SURVIVAL (Recession-proof, passionate)
+# ─────────────────────────────────────────────────────────────
+theprepared.com
+survivalblog.com
+primalsurvivor.net
+backdoorsurvival.com
+modernsurvivalblog.com
+
+# ─────────────────────────────────────────────────────────────
+# 41. WOODWORKING & CRAFTS (Maker movement)
+# ─────────────────────────────────────────────────────────────
+woodmagazine.com
+finewoodworking.com
+woodworkingnetwork.com
+kregtool.com
+rockler.com
+
+# ─────────────────────────────────────────────────────────────
+# 42. ASTROLOGY & SPIRITUALITY (Gen Z growth)
+# ─────────────────────────────────────────────────────────────
+astrology.com
+cafeastrology.com
+costar.com
+chani.com
+thepattern.com
+
+# ─────────────────────────────────────────────────────────────
+# 43. ESPORTS & STREAMING (Younger demographic, gear)
+# ─────────────────────────────────────────────────────────────
+esportsinsider.com
+dotesports.com
+streamelements.com
+streamlabs.com
+twitchtracker.com
+
+# ─────────────────────────────────────────────────────────────
+# 44. SNEAKERS & STREETWEAR (Resale market $6B)
+# ─────────────────────────────────────────────────────────────
+sneakernews.com
+highsnobiety.com
+hypebeast.com
+stockx.com
+goat.com
+
+# ─────────────────────────────────────────────────────────────
+# 45. DEBT & CREDIT REPAIR (High CPC $30+)
+# ─────────────────────────────────────────────────────────────
+creditkarma.com
+annualcreditreport.com
+creditsesame.com
+debt.org
+nationaldebtrelief.com
