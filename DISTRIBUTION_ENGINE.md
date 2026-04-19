@@ -555,7 +555,7 @@ The Distribution Engine is now core to EyeCX:
 ```
 EyeCX Pipeline (Updated)
 │
-├── 1. Screen (500K domains/day)
+├── 1. Screen (23M+ domains/day via ICANN CZDS zone files)
 │   └── Now includes: distribution relevance scoring
 │
 ├── 2. Score (6-factor + distribution factors)

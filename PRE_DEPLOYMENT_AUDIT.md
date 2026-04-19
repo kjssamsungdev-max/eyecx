@@ -245,7 +245,7 @@
 1. **Distribution focus** — Only platform built for developers distributing products
 2. **Full automation** — Acquire → Restore → Deploy → Monetize
 3. **Self-host option** — $0 to run
-4. **Live proof** — Our 200-domain network is the demo
+4. **Live proof** — The CZDS pipeline tracking 23M+ domains across xyz/info/org is the demo
 
 ### Where EyeCX Loses
 1. **No Ahrefs/Moz data** — Competitors have deeper backlink metrics
