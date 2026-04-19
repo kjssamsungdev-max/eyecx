@@ -143,6 +143,22 @@ export default {
       return json({ status: 'ok', timestamp: new Date().toISOString() });
     }
 
+    // POST /api/waitlist - Public waitlist signup
+    if (path === '/api/waitlist' && request.method === 'POST') {
+      try {
+        const { email } = await request.json() as { email: string };
+        if (!email || !email.includes('@')) {
+          return error('Valid email required', 400);
+        }
+        await env.DB.prepare(
+          'INSERT OR IGNORE INTO waitlist (email, source, created_at) VALUES (?, ?, datetime(\'now\'))'
+        ).bind(email, 'website').run();
+        return json({ ok: true });
+      } catch (e) {
+        return error('Failed to join waitlist', 500);
+      }
+    }
+
     // Auth required for all other endpoints
     if (!authenticate(request, env)) {
       return error('Unauthorized', 401);
@@ -529,6 +545,37 @@ async function getZoneSnapshot(
 
   if (!object) {
     return error(`Snapshot not found: ${tld} ${date}`, 404);
+  }
+
+  const size = object.size;
+
+  // For large files (>1MB), only return metadata to avoid OOM
+  if (size > 1_000_000) {
+    // Stream first 4KB and last 4KB
+    const body = object.body;
+    const reader = body.getReader();
+    let firstChunk = '';
+    let bytesRead = 0;
+
+    while (bytesRead < 4096) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      firstChunk += new TextDecoder().decode(value);
+      bytesRead += value.length;
+    }
+    reader.cancel();
+
+    const firstLines = firstChunk.split('\n').filter(l => l.trim()).slice(0, 20);
+    const totalEstimate = Math.round(size / (firstChunk.length / firstLines.length));
+
+    return json({
+      key,
+      size_bytes: size,
+      size_mb: (size / (1024 * 1024)).toFixed(1),
+      estimated_domains: totalEstimate,
+      first_20: firstLines,
+      metadata: object.customMetadata,
+    });
   }
 
   const text = await object.text();

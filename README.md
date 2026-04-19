@@ -4,7 +4,7 @@
 
 You don't have a product problem. You have a distribution problem.
 
-We built a 200-domain distribution network in 60 days. Now the tool is open.
+Goal: build a distribution network of 100+ domains across 10+ niches in 2026.
 
 ---
 
@@ -31,7 +31,7 @@ Expired domains come with backlinks, aged trust, and sometimes traffic. They're 
 
 ## What is EyeCX?
 
-EyeCX screens 500K+ expired domains daily and identifies high-value distribution assets. We used it to build our own 200-domain network across 45 niches — then opened it to subscribers.
+EyeCX ingests 23M+ domains daily from ICANN CZDS zone files and identifies high-value distribution assets as they drop. Pipeline is live, screening .xyz, .info, and .org zones daily.
 
 **This isn't domain flipping.** This is building permanent distribution channels for your products.
 
@@ -78,7 +78,7 @@ notionalternatives.com → "Top 10 Notion alternatives" (you're #1)
 
 ---
 
-## The Math
+## The Math (illustrative projection)
 
 **Without distribution network:**
 ```
@@ -88,15 +88,13 @@ LTV: $290
 Result: Losing money ❌
 ```
 
-**With 12-domain network:**
+**With 12-domain network (projected):**
 ```
 Investment: $2,580 (domains + content)
 After 6 months: 750 clicks/month → 22 customers
 After 12 months: 45 customers/month
-ROI: 6x in year one ✅
+Projected ROI: 6x in year one — actual results will vary
 ```
-
-**The network pays for itself in 2 months.**
 
 ---
 
@@ -124,7 +122,7 @@ Every domain found using EyeCX:
 Screen → Score → Acquire → Deploy → Connect
 ```
 
-1. **Screen** — 500K expired domains daily from Whoxy, Common Crawl, Wayback
+1. **Screen** — 23M+ domains daily from ICANN CZDS zone files
 2. **Score** — 6-factor scoring + distribution relevance
 3. **Acquire** — Auto-purchase via Cloudflare Registrar
 4. **Deploy** — Landing pages, micro-sites, or redirects
@@ -179,4 +177,4 @@ npx wrangler pages deploy . --project-name eyecx
 
 **Stop renting attention. Start owning distribution.**
 
-*"We built a 200-domain distribution network in 60 days. Now it's your turn."*
+*"Stop renting attention. Start owning distribution."*

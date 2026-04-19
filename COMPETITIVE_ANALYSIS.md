@@ -1,5 +1,7 @@
 # EyeCX v4.2 - Competitive Analysis
 
+> **Note:** EyeCX figures are self-reported estimates. Third-party benchmarking TBD.
+
 ## Market Landscape
 
 | Tool | Monthly Cost | Domains/Day | Key Strength |

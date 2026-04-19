@@ -88,10 +88,11 @@ Every restored site becomes part of your network:
 ### Phase 5: Scale
 
 ```
+Projections (unverified targets):
 Month 1: 10 restored sites
 Month 3: 50 sites across 5 niches
 Month 6: 150 sites, link network active
-Month 12: 500+ sites, $10K+/mo passive
+Month 12: 500+ sites — revenue TBD
 ```
 
 ---
@@ -355,11 +356,11 @@ npx wrangler d1 execute eyecx --command "SELECT tier, COUNT(*) FROM domains GROU
 - **GitHub Actions**: $0.008/min beyond free tier
 - **Cloudflare Workers**: $5/mo for 10M requests
 
-### ROI Example
-- Daily scan finds: 50 diamonds, 200 golds
-- Register 5 diamonds: $75
-- Flip 2 diamonds: $2,000
-- **Daily profit**: ~$1,925
+### ROI Example (projection, unverified)
+- *Assumes* daily scan finds 50 diamonds, 200 golds
+- *Assumes* register 5 diamonds: $75
+- *Assumes* flip 2 diamonds: $2,000
+- *Projected* daily profit: ~$1,925 — actual results will vary
 
 ---
 
