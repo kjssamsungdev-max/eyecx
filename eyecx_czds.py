@@ -196,7 +196,7 @@ def _is_gzipped(file_path: str) -> bool:
         return False
 
 
-def extract_domains_from_gz(gz_path: str) -> FrozenSet[str]:
+def extract_domains_from_gz(gz_path: str, tld: str = "") -> FrozenSet[str]:
     """Extract unique domain names from NS records in a zone file.
 
     Handles both gzipped and plain text zone files.
@@ -211,8 +211,9 @@ def extract_domains_from_gz(gz_path: str) -> FrozenSet[str]:
     domains: set[str] = set()
     lines_read = 0
     is_gz = _is_gzipped(gz_path)
+    apex = tld.lower().strip(".") if tld else ""
 
-    logger.info("Parsing zone file: %s (gzipped: %s)", gz_path, is_gz)
+    logger.info("Parsing zone file: %s (gzipped: %s, tld: %s)", gz_path, is_gz, tld)
     start = time.monotonic()
 
     opener = gzip.open if is_gz else open
@@ -235,7 +236,7 @@ def extract_domains_from_gz(gz_path: str) -> FrozenSet[str]:
                 break
 
             domain = _parse_ns_line(line)
-            if domain is not None:
+            if domain is not None and domain != apex:
                 domains.add(domain)
 
     elapsed = time.monotonic() - start
@@ -508,7 +509,7 @@ async def cmd_download(tld: str, token: str, config: CZDSConfig) -> bool:
             return False
 
         # Parse and save snapshot
-        domains = extract_domains_from_gz(gz_path)
+        domains = extract_domains_from_gz(gz_path, tld=tld)
         if len(domains) == 0:
             logger.error("No domains extracted from %s", gz_path)
             return False
@@ -614,7 +615,7 @@ def cmd_ingest(tld: str, gz_path: str, date_str: Optional[str] = None) -> bool:
     logger = create_logger("czds.cmd")
     date_str = date_str or datetime.utcnow().strftime("%Y-%m-%d")
 
-    domains = extract_domains_from_gz(gz_path)
+    domains = extract_domains_from_gz(gz_path, tld=tld)
     if len(domains) == 0:
         logger.error("No domains extracted from %s", gz_path)
         return False
