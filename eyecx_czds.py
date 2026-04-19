@@ -235,8 +235,8 @@ def extract_domains_from_gz(gz_path: str, tld: str = "") -> FrozenSet[str]:
                 logger.warning("Hit MAX_DOMAINS_PER_ZONE (%d), stopping", MAX_DOMAINS_PER_ZONE)
                 break
 
-            domain = _parse_ns_line(line)
-            if domain is not None and domain != apex:
+            domain = _parse_ns_line(line, tld=apex)
+            if domain is not None:
                 domains.add(domain)
 
     elapsed = time.monotonic() - start
@@ -250,15 +250,13 @@ def extract_domains_from_gz(gz_path: str, tld: str = "") -> FrozenSet[str]:
     return result
 
 
-def _parse_ns_line(line: str) -> Optional[str]:
+def _parse_ns_line(line: str, tld: str = "") -> Optional[str]:
     """Parse a single zone file line, returning the domain if it is an NS record.
 
-    Zone file NS lines look like:
-        example 3600 in ns ns1.example.com.
-    or with FQDN owner:
-        example.xyz. 3600 IN NS ns1.example.com.
+    CZDS zone files use FQDNs as owners:
+        example.xyz. 3600 IN NS ns1.example.xyz.
 
-    We want the owner name (left-most field), normalized without trailing dot.
+    Returns the full 2LD domain (e.g., "example.xyz"), not just the label.
     Rule 4: tiny helper, well under 60 lines.
     """
     stripped = line.strip()
@@ -282,9 +280,17 @@ def _parse_ns_line(line: str) -> Optional[str]:
         return None
 
     owner = parts[0].lower().rstrip(".")
-    if not owner or "." in owner:
-        # Skip sub-domains or the zone apex itself (e.g., "xyz")
-        # We only want second-level names without dots (within the zone)
+
+    # Skip empty or zone apex (e.g., "xyz")
+    if not owner or owner == tld:
+        return None
+
+    # Skip deeper subdomains (more than one dot = 3LD+), keep only 2LDs
+    if owner.count(".") > 1:
+        return None
+
+    # Skip owners that don't end with the TLD (safety check)
+    if tld and not owner.endswith("." + tld):
         return None
 
     return owner
