@@ -16,10 +16,25 @@ interface Env {
   DB: D1Database;
   ZONES: R2Bucket;
   API_SECRET: string;
+  RESEND_API_KEY: string;
   CLOUDFLARE_API_TOKEN: string;
   CLOUDFLARE_ACCOUNT_ID: string;
   CZDS_USERNAME: string;
   CZDS_PASSWORD: string;
+}
+
+interface SessionUser {
+  id: string;
+  username: string;
+  email: string;
+  role: string;
+  tier: string;
+  email_verified: number;
+  avatar_url: string;
+  bio: string;
+  karma: number;
+  badges: string;
+  created_at: string;
 }
 
 interface DomainRecord {
@@ -51,7 +66,7 @@ function authenticate(request: Request, env: Env): boolean {
 // CORS headers
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
@@ -68,6 +83,88 @@ function json(data: any, status = 200): Response {
 
 function error(message: string, status = 400): Response {
   return json({ error: message }, status);
+}
+
+// ============ PASSWORD HASHING ============
+
+function toHex(buf: ArrayBuffer): string {
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = toHex(crypto.getRandomValues(new Uint8Array(16)).buffer);
+  const data = new TextEncoder().encode(salt + password);
+  const hash = toHex(await crypto.subtle.digest('SHA-256', data));
+  return `${salt}:${hash}`;
+}
+
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return false;
+  const data = new TextEncoder().encode(salt + password);
+  const computed = toHex(await crypto.subtle.digest('SHA-256', data));
+  return computed === hash;
+}
+
+function generateToken(): string {
+  return toHex(crypto.getRandomValues(new Uint8Array(32)).buffer);
+}
+
+// ============ SESSION AUTH ============
+
+const USER_COLUMNS = 'id, username, email, role, tier, email_verified, avatar_url, bio, karma, badges, created_at';
+
+async function authenticateSession(request: Request, env: Env): Promise<SessionUser | null> {
+  const auth = request.headers.get('Authorization');
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  const token = auth.slice(7);
+
+  const session = await env.DB.prepare(
+    'SELECT user_id FROM sessions WHERE token = ? AND expires_at > datetime(\'now\')'
+  ).bind(token).first<{ user_id: string }>();
+  if (!session) return null;
+
+  const user = await env.DB.prepare(
+    `SELECT ${USER_COLUMNS} FROM community_users WHERE id = ?`
+  ).bind(session.user_id).first<SessionUser>();
+  return user || null;
+}
+
+async function requireSession(request: Request, env: Env): Promise<[SessionUser | null, Response | null]> {
+  const user = await authenticateSession(request, env);
+  if (!user) return [null, error('Not authenticated', 401)];
+  return [user, null];
+}
+
+async function requireAdmin(request: Request, env: Env): Promise<[SessionUser | null, Response | null]> {
+  const user = await authenticateSession(request, env);
+  if (!user) return [null, error('Not authenticated', 401)];
+  if (user.role !== 'admin') return [null, error('Admin required', 403)];
+  return [user, null];
+}
+
+// ============ EMAIL VIA RESEND ============
+
+async function sendEmail(env: Env, to: string, subject: string, html: string): Promise<boolean> {
+  if (!env.RESEND_API_KEY) return false;
+  try {
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'EyeCX <noreply@eyecx.com>',
+        to,
+        subject,
+        html,
+      }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
 }
 
 // Target TLDs to download from CZDS
@@ -158,6 +255,99 @@ export default {
         return error('Failed to join waitlist', 500);
       }
     }
+
+    // ============ AUTH ROUTES (public) ============
+
+    if (path === '/api/auth/register' && request.method === 'POST') {
+      return await handleRegister(request, env);
+    }
+    if (path === '/api/auth/login' && request.method === 'POST') {
+      return await handleLogin(request, env);
+    }
+    if (path === '/api/auth/logout' && request.method === 'POST') {
+      return await handleLogout(request, env);
+    }
+    if (path === '/api/auth/me' && request.method === 'GET') {
+      return await handleMe(request, env);
+    }
+    if (path === '/api/auth/verify-email' && request.method === 'GET') {
+      return await handleVerifyEmail(url, env);
+    }
+    if (path === '/api/auth/forgot-password' && request.method === 'POST') {
+      return await handleForgotPassword(request, env);
+    }
+    if (path === '/api/auth/reset-password' && request.method === 'POST') {
+      return await handleResetPassword(request, env);
+    }
+
+    // ============ PUBLIC CONTENT ROUTES ============
+
+    if (path === '/api/articles' && request.method === 'GET') {
+      return await listArticles(url, env);
+    }
+    if (path.startsWith('/api/articles/') && request.method === 'GET') {
+      const slug = path.split('/')[3];
+      return await getArticle(slug, env);
+    }
+    if (path === '/api/curated' && request.method === 'GET') {
+      return await listCurated(url, env);
+    }
+    if (path === '/api/threads' && request.method === 'GET') {
+      return await listThreads(url, env);
+    }
+    if (path.match(/^\/api\/threads\/\d+$/) && request.method === 'GET') {
+      const id = parseInt(path.split('/')[3]);
+      return await getThread(id, env);
+    }
+    if (path.match(/^\/api\/threads\/\d+\/comments$/) && request.method === 'GET') {
+      const id = parseInt(path.split('/')[3]);
+      return await listComments('thread', id, url, env);
+    }
+
+    // ============ SESSION-AUTHED COMMUNITY ROUTES ============
+
+    if (path === '/api/threads' && request.method === 'POST') {
+      const [user, err] = await requireSession(request, env);
+      if (err) return err;
+      return await createThread(request, user!, env);
+    }
+    if (path.match(/^\/api\/threads\/\d+\/comments$/) && request.method === 'POST') {
+      const [user, err] = await requireSession(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[3]);
+      return await createComment(request, user!, 'thread', id, env);
+    }
+    if (path === '/api/votes' && request.method === 'POST') {
+      const [user, err] = await requireSession(request, env);
+      if (err) return err;
+      return await handleVote(request, user!, env);
+    }
+
+    // ============ ADMIN CONTENT ROUTES ============
+
+    if (path === '/api/articles' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      return await createArticle(request, user!, env);
+    }
+    if (path.startsWith('/api/articles/') && request.method === 'PUT') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const slug = path.split('/')[3];
+      return await updateArticle(slug, request, env);
+    }
+    if (path === '/api/admin/users' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      return await listUsers(env);
+    }
+    if (path === '/api/admin/stats' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      return await adminStats(env);
+    }
+
+    // ============ BEARER API_SECRET ROUTES (existing) ============
 
     // Auth required for all other endpoints
     if (!authenticate(request, env)) {
@@ -503,6 +693,400 @@ async function handlePurchaseWebhook(body: any, env: Env): Promise<Response> {
   `).bind(status, domain).run();
 
   return json({ received: true, domain, status });
+}
+
+// ============ AUTH HANDLERS ============
+
+async function handleRegister(request: Request, env: Env): Promise<Response> {
+  const { username, email, password } = await request.json() as {
+    username: string; email: string; password: string;
+  };
+
+  if (!username || !email || !password) return error('username, email, and password required');
+  if (username.length < 3 || username.length > 30) return error('Username must be 3-30 characters');
+  if (password.length < 8) return error('Password must be at least 8 characters');
+  if (!email.includes('@')) return error('Valid email required');
+
+  const existing = await env.DB.prepare(
+    'SELECT id FROM community_users WHERE email = ? OR username = ?'
+  ).bind(email, username).first();
+  if (existing) return error('Email or username already taken', 409);
+
+  const id = crypto.randomUUID();
+  const passwordHash = await hashPassword(password);
+
+  await env.DB.prepare(
+    `INSERT INTO community_users (id, username, email, password_hash, role, tier, email_verified)
+     VALUES (?, ?, ?, ?, 'member', 'free', 0)`
+  ).bind(id, username, email, passwordHash).run();
+
+  // Send verification email
+  const verifyToken = generateToken();
+  const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    'INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)'
+  ).bind(verifyToken, id, expires).run();
+
+  await sendEmail(env, email, 'Verify your EyeCX account',
+    `<h2>Welcome to EyeCX</h2>
+     <p>Click the link below to verify your email:</p>
+     <p><a href="https://eyecx.com/api/auth/verify-email?token=${verifyToken}">Verify Email</a></p>
+     <p>This link expires in 24 hours.</p>`
+  );
+
+  const user = await env.DB.prepare(
+    `SELECT ${USER_COLUMNS} FROM community_users WHERE id = ?`
+  ).bind(id).first();
+
+  return json({ user }, 201);
+}
+
+async function handleLogin(request: Request, env: Env): Promise<Response> {
+  const { email, password } = await request.json() as { email: string; password: string };
+  if (!email || !password) return error('email and password required');
+
+  const user = await env.DB.prepare(
+    'SELECT id, password_hash FROM community_users WHERE email = ?'
+  ).bind(email).first<{ id: string; password_hash: string }>();
+  if (!user) return error('Invalid credentials', 401);
+
+  const valid = await verifyPassword(password, user.password_hash);
+  if (!valid) return error('Invalid credentials', 401);
+
+  // Create session
+  const token = generateToken();
+  const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare(
+    'INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)'
+  ).bind(token, user.id, expires).run();
+
+  const profile = await env.DB.prepare(
+    `SELECT ${USER_COLUMNS} FROM community_users WHERE id = ?`
+  ).bind(user.id).first();
+
+  return json({ token, user: profile });
+}
+
+async function handleLogout(request: Request, env: Env): Promise<Response> {
+  const auth = request.headers.get('Authorization');
+  if (!auth || !auth.startsWith('Bearer ')) return error('No session', 401);
+  const token = auth.slice(7);
+  await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
+  return json({ ok: true });
+}
+
+async function handleMe(request: Request, env: Env): Promise<Response> {
+  const user = await authenticateSession(request, env);
+  if (!user) return error('Not authenticated', 401);
+  return json({ user });
+}
+
+async function handleVerifyEmail(url: URL, env: Env): Promise<Response> {
+  const token = url.searchParams.get('token');
+  if (!token) return error('Token required');
+
+  const record = await env.DB.prepare(
+    'SELECT user_id FROM email_verifications WHERE token = ? AND expires_at > datetime(\'now\')'
+  ).bind(token).first<{ user_id: string }>();
+  if (!record) return error('Invalid or expired token', 400);
+
+  await env.DB.prepare(
+    'UPDATE community_users SET email_verified = 1 WHERE id = ?'
+  ).bind(record.user_id).run();
+  await env.DB.prepare('DELETE FROM email_verifications WHERE token = ?').bind(token).run();
+
+  return new Response('<html><body><h2>Email verified!</h2><p>You can now <a href="https://eyecx.com">return to EyeCX</a>.</p></body></html>', {
+    headers: { 'Content-Type': 'text/html', ...corsHeaders },
+  });
+}
+
+async function handleForgotPassword(request: Request, env: Env): Promise<Response> {
+  const { email } = await request.json() as { email: string };
+  if (!email) return error('Email required');
+
+  const user = await env.DB.prepare(
+    'SELECT id FROM community_users WHERE email = ?'
+  ).bind(email).first<{ id: string }>();
+
+  // Always return success (don't leak whether email exists)
+  if (!user) return json({ ok: true });
+
+  const token = generateToken();
+  const expires = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+  await env.DB.prepare(
+    'INSERT INTO password_resets (token, user_id, expires_at) VALUES (?, ?, ?)'
+  ).bind(token, user.id, expires).run();
+
+  await sendEmail(env, email, 'Reset your EyeCX password',
+    `<h2>Password Reset</h2>
+     <p>Click the link below to reset your password:</p>
+     <p><a href="https://eyecx.com/reset-password?token=${token}">Reset Password</a></p>
+     <p>This link expires in 1 hour.</p>`
+  );
+
+  return json({ ok: true });
+}
+
+async function handleResetPassword(request: Request, env: Env): Promise<Response> {
+  const { token, password } = await request.json() as { token: string; password: string };
+  if (!token || !password) return error('Token and password required');
+  if (password.length < 8) return error('Password must be at least 8 characters');
+
+  const record = await env.DB.prepare(
+    'SELECT user_id FROM password_resets WHERE token = ? AND expires_at > datetime(\'now\') AND used = 0'
+  ).bind(token).first<{ user_id: string }>();
+  if (!record) return error('Invalid or expired token', 400);
+
+  const passwordHash = await hashPassword(password);
+  await env.DB.prepare(
+    'UPDATE community_users SET password_hash = ? WHERE id = ?'
+  ).bind(passwordHash, record.user_id).run();
+  await env.DB.prepare(
+    'UPDATE password_resets SET used = 1 WHERE token = ?'
+  ).bind(token).run();
+
+  // Clear all sessions for this user
+  await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(record.user_id).run();
+
+  return json({ ok: true });
+}
+
+// ============ THREAD HANDLERS ============
+
+async function listThreads(url: URL, env: Env): Promise<Response> {
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 50);
+  const offset = parseInt(url.searchParams.get('offset') || '0');
+  const category = url.searchParams.get('category');
+
+  let query = `SELECT t.*, u.username, u.avatar_url FROM threads t
+    LEFT JOIN community_users u ON t.author_id = u.id`;
+  const params: any[] = [];
+
+  if (category) {
+    query += ' WHERE t.category = ?';
+    params.push(category);
+  }
+  query += ' ORDER BY t.pinned DESC, t.created_at DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+
+  const result = await env.DB.prepare(query).bind(...params).all();
+  return json({ threads: result.results || [], count: result.results?.length || 0 });
+}
+
+async function getThread(id: number, env: Env): Promise<Response> {
+  const thread = await env.DB.prepare(
+    `SELECT t.*, u.username, u.avatar_url FROM threads t
+     LEFT JOIN community_users u ON t.author_id = u.id WHERE t.id = ?`
+  ).bind(id).first();
+  if (!thread) return error('Thread not found', 404);
+
+  await env.DB.prepare('UPDATE threads SET views = views + 1 WHERE id = ?').bind(id).run();
+  return json(thread);
+}
+
+async function createThread(request: Request, user: SessionUser, env: Env): Promise<Response> {
+  const { title, body, category } = await request.json() as {
+    title: string; body: string; category?: string;
+  };
+  if (!title || !body) return error('Title and body required');
+
+  const result = await env.DB.prepare(
+    `INSERT INTO threads (title, body, author_id, category) VALUES (?, ?, ?, ?)`
+  ).bind(title, body, user.id, category || 'General Discussion').run();
+
+  await env.DB.prepare('UPDATE community_users SET karma = karma + 1 WHERE id = ?').bind(user.id).run();
+
+  return json({ id: result.meta.last_row_id, title, category: category || 'General Discussion' }, 201);
+}
+
+// ============ COMMENT HANDLERS ============
+
+async function listComments(parentType: string, parentId: number, url: URL, env: Env): Promise<Response> {
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+  const offset = parseInt(url.searchParams.get('offset') || '0');
+
+  const result = await env.DB.prepare(
+    `SELECT c.*, u.username, u.avatar_url FROM comments c
+     LEFT JOIN community_users u ON c.author_id = u.id
+     WHERE c.parent_type = ? AND c.parent_id = ? AND c.deleted = 0
+     ORDER BY c.created_at ASC LIMIT ? OFFSET ?`
+  ).bind(parentType, parentId, limit, offset).all();
+
+  return json({ comments: result.results || [], count: result.results?.length || 0 });
+}
+
+async function createComment(
+  request: Request, user: SessionUser, parentType: string, parentId: number, env: Env
+): Promise<Response> {
+  const { body, reply_to_id } = await request.json() as { body: string; reply_to_id?: number };
+  if (!body) return error('Body required');
+
+  const result = await env.DB.prepare(
+    `INSERT INTO comments (body, author_id, parent_type, parent_id, reply_to_id) VALUES (?, ?, ?, ?, ?)`
+  ).bind(body, user.id, parentType, parentId, reply_to_id || null).run();
+
+  if (parentType === 'thread') {
+    await env.DB.prepare('UPDATE threads SET reply_count = reply_count + 1 WHERE id = ?').bind(parentId).run();
+  }
+  await env.DB.prepare('UPDATE community_users SET karma = karma + 1 WHERE id = ?').bind(user.id).run();
+
+  return json({ id: result.meta.last_row_id }, 201);
+}
+
+// ============ VOTE HANDLER ============
+
+async function handleVote(request: Request, user: SessionUser, env: Env): Promise<Response> {
+  const { target_type, target_id, value } = await request.json() as {
+    target_type: string; target_id: number; value: number;
+  };
+  if (!target_type || !target_id || (value !== 1 && value !== -1)) {
+    return error('target_type, target_id, and value (1 or -1) required');
+  }
+
+  // Upsert vote
+  await env.DB.prepare(
+    `INSERT INTO votes (user_id, target_type, target_id, value) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, target_type, target_id) DO UPDATE SET value = ?`
+  ).bind(user.id, target_type, target_id, value, value).run();
+
+  // Update target counts
+  const table = target_type === 'thread' ? 'threads' : target_type === 'comment' ? 'comments' : null;
+  if (table) {
+    const ups = await env.DB.prepare(
+      'SELECT COUNT(*) as c FROM votes WHERE target_type = ? AND target_id = ? AND value = 1'
+    ).bind(target_type, target_id).first<{ c: number }>();
+    const downs = await env.DB.prepare(
+      'SELECT COUNT(*) as c FROM votes WHERE target_type = ? AND target_id = ? AND value = -1'
+    ).bind(target_type, target_id).first<{ c: number }>();
+
+    await env.DB.prepare(
+      `UPDATE ${table} SET upvotes = ?, downvotes = ? WHERE id = ?`
+    ).bind(ups?.c || 0, downs?.c || 0, target_id).run();
+  }
+
+  return json({ ok: true, target_type, target_id, value });
+}
+
+// ============ ARTICLE HANDLERS ============
+
+async function listArticles(url: URL, env: Env): Promise<Response> {
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 50);
+  const offset = parseInt(url.searchParams.get('offset') || '0');
+  const category = url.searchParams.get('category');
+
+  let query = `SELECT id, title, slug, excerpt, author_id, category, tags, thumbnail_url,
+    read_time, views, published_at, created_at FROM articles WHERE status = 'published'`;
+  const params: any[] = [];
+
+  if (category) {
+    query += ' AND category = ?';
+    params.push(category);
+  }
+  query += ' ORDER BY published_at DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+
+  const result = await env.DB.prepare(query).bind(...params).all();
+  return json({ articles: result.results || [], count: result.results?.length || 0 });
+}
+
+async function getArticle(slug: string, env: Env): Promise<Response> {
+  const article = await env.DB.prepare(
+    'SELECT * FROM articles WHERE slug = ? AND status = \'published\''
+  ).bind(slug).first();
+  if (!article) return error('Article not found', 404);
+
+  await env.DB.prepare('UPDATE articles SET views = views + 1 WHERE slug = ?').bind(slug).run();
+  return json(article);
+}
+
+async function createArticle(request: Request, user: SessionUser, env: Env): Promise<Response> {
+  const { title, slug, excerpt, body_md, category, tags, thumbnail_url, status } = await request.json() as {
+    title: string; slug: string; excerpt?: string; body_md: string;
+    category?: string; tags?: string; thumbnail_url?: string; status?: string;
+  };
+  if (!title || !slug || !body_md) return error('title, slug, and body_md required');
+
+  const wordCount = body_md.split(/\s+/).length;
+  const readTime = Math.max(1, Math.ceil(wordCount / 200));
+  const pubStatus = status || 'published';
+  const publishedAt = pubStatus === 'published' ? new Date().toISOString() : null;
+
+  const result = await env.DB.prepare(
+    `INSERT INTO articles (title, slug, excerpt, body_md, author_id, category, tags, thumbnail_url, read_time, status, published_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(title, slug, excerpt || '', body_md, user.id, category || 'News', tags || '[]',
+    thumbnail_url || '', readTime, pubStatus, publishedAt).run();
+
+  return json({ id: result.meta.last_row_id, slug }, 201);
+}
+
+async function updateArticle(slug: string, request: Request, env: Env): Promise<Response> {
+  const fields = await request.json() as Record<string, any>;
+  const allowed = ['title', 'excerpt', 'body_md', 'category', 'tags', 'thumbnail_url', 'status'];
+  const updates: string[] = [];
+  const values: any[] = [];
+
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      updates.push(`${key} = ?`);
+      values.push(fields[key]);
+    }
+  }
+  if (updates.length === 0) return error('No valid fields to update');
+
+  updates.push('updated_at = datetime(\'now\')');
+  if (fields.status === 'published') {
+    updates.push('published_at = COALESCE(published_at, datetime(\'now\'))');
+  }
+
+  values.push(slug);
+  await env.DB.prepare(
+    `UPDATE articles SET ${updates.join(', ')} WHERE slug = ?`
+  ).bind(...values).run();
+
+  return json({ ok: true, slug });
+}
+
+// ============ CURATED CONTENT ============
+
+async function listCurated(url: URL, env: Env): Promise<Response> {
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 50);
+  const offset = parseInt(url.searchParams.get('offset') || '0');
+
+  const result = await env.DB.prepare(
+    `SELECT id, source_name, title, url, excerpt, author, published_at, category, tags,
+     views, featured FROM curated_content WHERE status = 'published' AND archived = 0
+     ORDER BY published_at DESC LIMIT ? OFFSET ?`
+  ).bind(limit, offset).all();
+
+  return json({ articles: result.results || [], count: result.results?.length || 0 });
+}
+
+// ============ ADMIN HANDLERS ============
+
+async function listUsers(env: Env): Promise<Response> {
+  const result = await env.DB.prepare(
+    `SELECT ${USER_COLUMNS} FROM community_users ORDER BY created_at DESC LIMIT 100`
+  ).all();
+  return json({ users: result.results || [] });
+}
+
+async function adminStats(env: Env): Promise<Response> {
+  const users = await env.DB.prepare('SELECT COUNT(*) as c FROM community_users').first<{ c: number }>();
+  const threads = await env.DB.prepare('SELECT COUNT(*) as c FROM threads').first<{ c: number }>();
+  const articles = await env.DB.prepare('SELECT COUNT(*) as c FROM articles').first<{ c: number }>();
+  const waitlist = await env.DB.prepare('SELECT COUNT(*) as c FROM waitlist').first<{ c: number }>();
+  const comments = await env.DB.prepare('SELECT COUNT(*) as c FROM comments').first<{ c: number }>();
+  const curated = await env.DB.prepare('SELECT COUNT(*) as c FROM curated_content').first<{ c: number }>();
+
+  return json({
+    users: users?.c || 0,
+    threads: threads?.c || 0,
+    articles: articles?.c || 0,
+    comments: comments?.c || 0,
+    curated: curated?.c || 0,
+    waitlist: waitlist?.c || 0,
+  });
 }
 
 // PUT /api/zones/:tld/:date - Upload snapshot to R2
