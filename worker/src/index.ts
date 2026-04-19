@@ -11,12 +11,15 @@
  * Auth: Bearer token in Authorization header
  */
 
-// D1 Database binding
+// Bindings
 interface Env {
   DB: D1Database;
+  ZONES: R2Bucket;
   API_SECRET: string;
   CLOUDFLARE_API_TOKEN: string;
   CLOUDFLARE_ACCOUNT_ID: string;
+  CZDS_USERNAME: string;
+  CZDS_PASSWORD: string;
 }
 
 interface DomainRecord {
@@ -67,8 +70,65 @@ function error(message: string, status = 400): Response {
   return json({ error: message }, status);
 }
 
+// Target TLDs to download from CZDS
+const CZDS_TLDS = ['xyz', 'info', 'biz', 'net', 'org'];
+
 // Main handler
 export default {
+  // Cron trigger: runs daily at 1 AM UTC
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    console.log('CZDS cron triggered:', new Date().toISOString());
+
+    if (!env.CZDS_USERNAME || !env.CZDS_PASSWORD) {
+      console.error('CZDS credentials not set. Run: npx wrangler secret put CZDS_USERNAME / CZDS_PASSWORD');
+      return;
+    }
+
+    try {
+      // 1. Authenticate with CZDS
+      const token = await czdsAuthenticate(env.CZDS_USERNAME, env.CZDS_PASSWORD);
+      if (!token) {
+        console.error('CZDS authentication failed');
+        return;
+      }
+      console.log('CZDS auth successful');
+
+      // 2. Get list of approved zones
+      const approvedZones = await czdsGetApprovedZones(token);
+      console.log(`CZDS approved zones: ${approvedZones.length}`);
+
+      // 3. Filter to our target TLDs
+      const today = new Date().toISOString().split('T')[0];
+      const targetZones = approvedZones.filter(url => {
+        const tld = url.split('/').pop()?.replace('.zone', '') || '';
+        return CZDS_TLDS.includes(tld);
+      });
+      console.log(`Target zones to download: ${targetZones.length}`);
+
+      // 4. Stream each zone file to R2
+      for (const zoneUrl of targetZones) {
+        const tld = zoneUrl.split('/').pop()?.replace('.zone', '') || '';
+        const r2Key = `raw/${tld}/${tld}_${today}.zone.gz`;
+
+        // Skip if already downloaded today
+        const existing = await env.ZONES.head(r2Key);
+        if (existing) {
+          console.log(`Already have ${r2Key}, skipping`);
+          continue;
+        }
+
+        console.log(`Downloading ${tld} zone file...`);
+        const ok = await czdsStreamToR2(zoneUrl, token, r2Key, env.ZONES);
+        console.log(`${tld}: ${ok ? 'success' : 'failed'}`);
+      }
+
+      // 5. Log completion
+      console.log('CZDS cron complete:', new Date().toISOString());
+    } catch (e) {
+      console.error('CZDS cron error:', e);
+    }
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
@@ -126,6 +186,68 @@ export default {
       if (path === '/api/check-availability' && request.method === 'POST') {
         const body = await request.json() as { domain: string };
         return await checkAvailability(body.domain, env);
+      }
+
+      // POST /api/zones/diff - Diff two zone snapshots, return dropped domains
+      if (path === '/api/zones/diff' && request.method === 'POST') {
+        const body = await request.json() as { tld: string; yesterday: string; today: string };
+        return await diffZoneSnapshots(body.tld, body.yesterday, body.today, env);
+      }
+
+      // Zone snapshot routes: /api/zones/:tld or /api/zones/:tld/:date
+      if (path.startsWith('/api/zones/')) {
+        const parts = path.split('/');
+        const tld = parts[3];
+        const date = parts[4];
+
+        if (request.method === 'PUT' && tld && date) {
+          return await uploadZoneSnapshot(request, tld, date, env);
+        }
+        if (request.method === 'GET' && tld && date) {
+          return await getZoneSnapshot(tld, date, env);
+        }
+        if (request.method === 'GET' && tld && !date) {
+          return await listZoneSnapshots(tld, env);
+        }
+      }
+
+      // POST /api/verify-domains - RDAP verify domains in D1, remove registered
+      if (path === '/api/verify-domains' && request.method === 'POST') {
+        return await verifyAllDomains(env);
+      }
+
+      // GET /api/czds/auth-test - Test CZDS authentication only
+      if (path === '/api/czds/auth-test' && request.method === 'GET') {
+        if (!env.CZDS_USERNAME || !env.CZDS_PASSWORD) {
+          return error('CZDS credentials not configured', 400);
+        }
+        // Note: ICANN blocks CF Worker IPs (503). Auth works from GH Actions.
+        const token = await czdsAuthenticate(env.CZDS_USERNAME, env.CZDS_PASSWORD);
+        if (!token) {
+          return json({
+            status: 'failed',
+            username: env.CZDS_USERNAME,
+            message: 'Authentication failed (ICANN may block CF Worker IPs - use GitHub Actions instead)',
+          }, 401);
+        }
+        const zones = await czdsGetApprovedZones(token);
+        return json({
+          status: 'success',
+          username: env.CZDS_USERNAME,
+          message: 'Authentication successful',
+          approved_zones: zones.length,
+          zone_tlds: zones.map(u => u.split('/').pop()?.replace('.zone', '')),
+        });
+      }
+
+      // POST /api/czds/fetch - Manually trigger CZDS zone file download
+      if (path === '/api/czds/fetch' && request.method === 'POST') {
+        return await manualCzdsFetch(env);
+      }
+
+      // GET /api/czds/status - Check what zone files are in R2
+      if (path === '/api/czds/status' && request.method === 'GET') {
+        return await czdsStatus(env);
       }
 
       return error('Not found', 404);
@@ -356,4 +478,352 @@ async function handlePurchaseWebhook(body: any, env: Env): Promise<Response> {
   `).bind(status, domain).run();
 
   return json({ received: true, domain, status });
+}
+
+// PUT /api/zones/:tld/:date - Upload snapshot to R2
+async function uploadZoneSnapshot(
+  request: Request,
+  tld: string,
+  date: string,
+  env: Env
+): Promise<Response> {
+  const key = `snapshots/${tld}/${tld}_${date}.domains.txt`;
+  const body = await request.text();
+  const lines = body.trim().split('\n').filter(l => l.trim());
+
+  await env.ZONES.put(key, body, {
+    customMetadata: {
+      tld,
+      date,
+      domain_count: String(lines.length),
+      uploaded_at: new Date().toISOString(),
+    },
+  });
+
+  return json({
+    key,
+    tld,
+    date,
+    domain_count: lines.length,
+    uploaded_at: new Date().toISOString(),
+  });
+}
+
+// GET /api/zones/:tld/:date - Download snapshot from R2
+async function getZoneSnapshot(
+  tld: string,
+  date: string,
+  env: Env
+): Promise<Response> {
+  const key = `snapshots/${tld}/${tld}_${date}.domains.txt`;
+  const object = await env.ZONES.get(key);
+
+  if (!object) {
+    return error(`Snapshot not found: ${tld} ${date}`, 404);
+  }
+
+  const text = await object.text();
+  return new Response(text, {
+    headers: {
+      'Content-Type': 'text/plain',
+      ...corsHeaders,
+      'X-Domain-Count': object.customMetadata?.domain_count || '0',
+      'X-Snapshot-Date': date,
+    },
+  });
+}
+
+// GET /api/zones/:tld - List snapshots for a TLD
+async function listZoneSnapshots(tld: string, env: Env): Promise<Response> {
+  const prefix = `snapshots/${tld}/`;
+  const listed = await env.ZONES.list({ prefix, limit: 100 });
+
+  const snapshots = listed.objects.map(obj => ({
+    key: obj.key,
+    date: obj.key.match(/_(\d{4}-\d{2}-\d{2})\./)?.[1] || 'unknown',
+    size: obj.size,
+    domain_count: obj.customMetadata?.domain_count || 'unknown',
+    uploaded: obj.uploaded.toISOString(),
+  }));
+
+  return json({ tld, count: snapshots.length, snapshots });
+}
+
+// POST /api/zones/diff - Diff two snapshots, return dropped domains
+async function diffZoneSnapshots(
+  tld: string,
+  yesterdayDate: string,
+  todayDate: string,
+  env: Env
+): Promise<Response> {
+  const yesterdayKey = `snapshots/${tld}/${tld}_${yesterdayDate}.domains.txt`;
+  const todayKey = `snapshots/${tld}/${tld}_${todayDate}.domains.txt`;
+
+  const [yesterdayObj, todayObj] = await Promise.all([
+    env.ZONES.get(yesterdayKey),
+    env.ZONES.get(todayKey),
+  ]);
+
+  if (!yesterdayObj) return error(`Yesterday snapshot not found: ${yesterdayDate}`, 404);
+  if (!todayObj) return error(`Today snapshot not found: ${todayDate}`, 404);
+
+  const yesterdayText = await yesterdayObj.text();
+  const todayText = await todayObj.text();
+
+  const yesterdaySet = new Set(yesterdayText.trim().split('\n').filter(l => l.trim()));
+  const todaySet = new Set(todayText.trim().split('\n').filter(l => l.trim()));
+
+  const dropped: string[] = [];
+  const added: string[] = [];
+
+  for (const d of yesterdaySet) {
+    if (!todaySet.has(d)) dropped.push(d);
+  }
+  for (const d of todaySet) {
+    if (!yesterdaySet.has(d)) added.push(d);
+  }
+
+  dropped.sort();
+  added.sort();
+
+  // Store dropped list in R2
+  const droppedKey = `dropped/${tld}/dropped_${tld}_${todayDate}.txt`;
+  const droppedContent = dropped.map(d => `${d}.${tld}`).join('\n');
+  await env.ZONES.put(droppedKey, droppedContent, {
+    customMetadata: {
+      tld,
+      date: todayDate,
+      dropped_count: String(dropped.length),
+      added_count: String(added.length),
+    },
+  });
+
+  return json({
+    tld,
+    yesterday: yesterdayDate,
+    today: todayDate,
+    yesterday_count: yesterdaySet.size,
+    today_count: todaySet.size,
+    dropped_count: dropped.length,
+    added_count: added.length,
+    dropped_domains: dropped.slice(0, 500), // first 500 for preview
+    dropped_file: droppedKey,
+  });
+}
+
+// POST /api/verify-domains - RDAP verify all domains in D1, remove registered
+async function verifyAllDomains(env: Env): Promise<Response> {
+  // Get all domains that haven't been verified or are unknown
+  const result = await env.DB.prepare(`
+    SELECT domain FROM domains
+    WHERE availability_status IN ('unknown', '')
+    ORDER BY potential_score DESC
+    LIMIT 500
+  `).all();
+
+  const domains = (result.results || []).map((r: any) => r.domain as string);
+  if (domains.length === 0) {
+    return json({ message: 'No domains to verify', verified: 0, removed: 0 });
+  }
+
+  let verified = 0;
+  let removed = 0;
+  let available = 0;
+  const errors: string[] = [];
+
+  // Process in batches of 10 with rate limiting
+  for (let i = 0; i < domains.length; i += 10) {
+    const batch = domains.slice(i, i + 10);
+    const checks = batch.map(async (domain) => {
+      try {
+        const resp = await fetch(`https://rdap.org/domain/${domain}`, {
+          signal: AbortSignal.timeout(10000),
+        });
+        if (resp.status === 200) {
+          // Domain is registered - remove it
+          await env.DB.prepare('DELETE FROM domains WHERE domain = ?').bind(domain).run();
+          return 'registered';
+        } else if (resp.status === 404) {
+          // Domain is available - mark it
+          await env.DB.prepare(
+            'UPDATE domains SET availability_status = ? WHERE domain = ?'
+          ).bind('available', domain).run();
+          return 'available';
+        }
+        // Other status - mark unknown
+        await env.DB.prepare(
+          'UPDATE domains SET availability_status = ? WHERE domain = ?'
+        ).bind('unknown', domain).run();
+        return 'unknown';
+      } catch {
+        return 'error';
+      }
+    });
+
+    const results = await Promise.allSettled(checks);
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        verified++;
+        if (r.value === 'registered') removed++;
+        if (r.value === 'available') available++;
+      }
+    }
+
+    // Rate limit: ~10/sec
+    if (i + 10 < domains.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  return json({
+    total_checked: verified,
+    removed_registered: removed,
+    confirmed_available: available,
+    remaining: domains.length - verified,
+  });
+}
+
+// POST /api/czds/fetch - Manual trigger for CZDS download
+async function manualCzdsFetch(env: Env): Promise<Response> {
+  if (!env.CZDS_USERNAME || !env.CZDS_PASSWORD) {
+    return error('CZDS credentials not configured. Set CZDS_USERNAME and CZDS_PASSWORD worker secrets.', 400);
+  }
+
+  const token = await czdsAuthenticate(env.CZDS_USERNAME, env.CZDS_PASSWORD);
+  if (!token) {
+    return error('CZDS authentication failed', 401);
+  }
+
+  const approvedZones = await czdsGetApprovedZones(token);
+  const today = new Date().toISOString().split('T')[0];
+  const results: Array<{ tld: string; status: string; key?: string }> = [];
+
+  const targetZones = approvedZones.filter(url => {
+    const tld = url.split('/').pop()?.replace('.zone', '') || '';
+    return CZDS_TLDS.includes(tld);
+  });
+
+  for (const zoneUrl of targetZones) {
+    const tld = zoneUrl.split('/').pop()?.replace('.zone', '') || '';
+    const r2Key = `raw/${tld}/${tld}_${today}.zone.gz`;
+
+    const existing = await env.ZONES.head(r2Key);
+    if (existing) {
+      results.push({ tld, status: 'already_exists', key: r2Key });
+      continue;
+    }
+
+    const ok = await czdsStreamToR2(zoneUrl, token, r2Key, env.ZONES);
+    results.push({ tld, status: ok ? 'downloaded' : 'failed', key: ok ? r2Key : undefined });
+  }
+
+  return json({
+    date: today,
+    approved_zones: approvedZones.length,
+    target_zones: targetZones.length,
+    results,
+  });
+}
+
+// GET /api/czds/status - List raw zone files and snapshots in R2
+async function czdsStatus(env: Env): Promise<Response> {
+  const rawList = await env.ZONES.list({ prefix: 'raw/', limit: 50 });
+  const snapList = await env.ZONES.list({ prefix: 'snapshots/', limit: 50 });
+  const droppedList = await env.ZONES.list({ prefix: 'dropped/', limit: 50 });
+
+  const format = (obj: R2Object) => ({
+    key: obj.key,
+    size_mb: (obj.size / (1024 * 1024)).toFixed(1),
+    uploaded: obj.uploaded.toISOString(),
+    metadata: obj.customMetadata,
+  });
+
+  return json({
+    raw_zone_files: rawList.objects.map(format),
+    snapshots: snapList.objects.map(format),
+    dropped_lists: droppedList.objects.map(format),
+  });
+}
+
+// ============ CZDS HELPERS ============
+
+// Authenticate with ICANN CZDS, return JWT token
+async function czdsAuthenticate(username: string, password: string): Promise<string | null> {
+  try {
+    const resp = await fetch('https://account-api.icann.org/api/authenticate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (resp.status !== 200) {
+      console.error(`CZDS auth HTTP ${resp.status}: ${await resp.text()}`);
+      return null;
+    }
+
+    const data = await resp.json() as { accessToken?: string };
+    return data.accessToken || null;
+  } catch (e) {
+    console.error('CZDS auth error:', e);
+    return null;
+  }
+}
+
+// Get list of approved zone download URLs
+async function czdsGetApprovedZones(token: string): Promise<string[]> {
+  try {
+    const resp = await fetch('https://czds-api.icann.org/czds/downloads/links', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (resp.status !== 200) {
+      console.error(`CZDS links HTTP ${resp.status}`);
+      return [];
+    }
+
+    const links = await resp.json() as string[];
+    return Array.isArray(links) ? links : [];
+  } catch (e) {
+    console.error('CZDS links error:', e);
+    return [];
+  }
+}
+
+// Stream a zone file from CZDS directly to R2 (no memory buffering)
+async function czdsStreamToR2(
+  zoneUrl: string,
+  token: string,
+  r2Key: string,
+  bucket: R2Bucket
+): Promise<boolean> {
+  try {
+    const resp = await fetch(zoneUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (resp.status !== 200 || !resp.body) {
+      console.error(`CZDS download HTTP ${resp.status} for ${zoneUrl}`);
+      return false;
+    }
+
+    const contentLength = resp.headers.get('Content-Length');
+    const tld = zoneUrl.split('/').pop()?.replace('.zone', '') || 'unknown';
+
+    // Stream directly from CZDS response to R2 — zero memory buffering
+    await bucket.put(r2Key, resp.body, {
+      httpMetadata: { contentType: 'application/gzip' },
+      customMetadata: {
+        tld,
+        source_url: zoneUrl,
+        content_length: contentLength || 'unknown',
+        downloaded_at: new Date().toISOString(),
+      },
+    });
+
+    console.log(`Streamed ${tld} zone to R2: ${r2Key} (${contentLength} bytes)`);
+    return true;
+  } catch (e) {
+    console.error(`CZDS stream error for ${zoneUrl}:`, e);
+    return false;
+  }
 }

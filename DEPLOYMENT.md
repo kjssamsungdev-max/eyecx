@@ -281,7 +281,7 @@ gh workflow run daily-scan.yml
 
 ```bash
 # Run local scan
-python eyecx_v4.py --seeds seeds.txt --opr-key YOUR_KEY
+python eyecx.py --seeds seeds.txt --opr-key YOUR_KEY
 
 # Query API for diamonds
 curl -H "Authorization: Bearer YOUR_API_SECRET" \
@@ -408,7 +408,7 @@ for affiliate in affiliates:
 ### Scan fails
 1. Check GitHub Actions logs: `gh run view <run_id> --log`
 2. Verify secrets are set: `gh secret list`
-3. Test locally: `python eyecx_v4.py --max-seeds 5`
+3. Test locally: `python eyecx.py --seeds seeds.txt`
 
 ### Low domain count
 1. Check seed quality (high-traffic seeds yield more)
@@ -435,9 +435,13 @@ for affiliate in affiliates:
 
 ```
 eyecx/
-├── eyecx_v4.py      # Main pipeline
+├── eyecx.py                  # Main pipeline
+├── eyecx_distribution.py     # Distribution engine
+├── schema.sql                # D1 database schema
 ├── seeds.txt                 # 50 seed domains
+├── seeds-expanded.txt        # Expanded niche seeds
 ├── requirements.txt          # Python deps
+├── index.html                # Landing page
 │
 ├── worker/
 │   ├── src/index.ts          # Cloudflare Worker API

@@ -2,19 +2,28 @@ name = "eyecx-api"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
-# Account settings (set via environment or wrangler secret)
-# account_id = "your_account_id"
-
 # D1 Database binding
 [[d1_databases]]
 binding = "DB"
 database_name = "eyecx"
 database_id = "d33d4f46-5599-47f0-8b70-1b6ea0175496"
 
-# Environment variables (set via wrangler secret)
-# API_SECRET - Bearer token for API auth
-# CLOUDFLARE_API_TOKEN - For registrar API
+# R2 Storage binding
+[[r2_buckets]]
+binding = "ZONES"
+bucket_name = "eyecx-zones"
+
+# Secrets (set via wrangler secret put):
+# API_SECRET            - Bearer token for API auth
+# CLOUDFLARE_API_TOKEN  - For registrar API
 # CLOUDFLARE_ACCOUNT_ID - Account ID
+# CZDS_USERNAME         - ICANN CZDS email
+# CZDS_PASSWORD         - ICANN CZDS password
+
+# Note: CZDS auth is blocked from CF Worker IPs (503).
+# Zone file downloads run via GitHub Actions instead.
+# [triggers]
+# crons = ["0 1 * * *"]
 
 [vars]
 ENVIRONMENT = "production"
@@ -27,8 +36,3 @@ name = "eyecx-api-dev"
 binding = "DB"
 database_name = "eyecx-dev"
 database_id = ""
-
-# Routes
-# routes = [
-#   { pattern = "api.eyecx.com/*", zone_name = "eyecx.com" }
-# ]

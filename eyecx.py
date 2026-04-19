@@ -117,6 +117,7 @@ class DomainResult:
     majestic_rank: Optional[int]
     tranco_rank: Optional[int]
     source: str
+    availability_status: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,7 @@ class Database:
         majestic_rank INTEGER,
         tranco_rank INTEGER,
         source TEXT NOT NULL,
+        availability_status TEXT NOT NULL DEFAULT 'unknown',
         created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_score ON domains(score DESC);
@@ -224,14 +226,15 @@ class Database:
             
             try:
                 self._conn.execute("""
-                    INSERT OR REPLACE INTO domains 
-                    (domain, tld, score, tier, flip_value, pr, snapshots, 
-                     age_years, majestic_rank, tranco_rank, source, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO domains
+                    (domain, tld, score, tier, flip_value, pr, snapshots,
+                     age_years, majestic_rank, tranco_rank, source,
+                     availability_status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     r.domain, r.tld, r.score, r.tier, r.flip_value,
                     r.pr, r.snapshots, r.age_years, r.majestic_rank,
-                    r.tranco_rank, r.source, now
+                    r.tranco_rank, r.source, r.availability_status, now
                 ))
                 inserted += 1
             except sqlite3.Error as e:
@@ -613,6 +616,69 @@ async def load_tranco(session: aiohttp.ClientSession, logger: logging.Logger) ->
     return result
 
 
+# ============ RDAP AVAILABILITY (Rule 2: Bounded, Rule 7: Check returns) ============
+async def check_rdap_availability(
+    session: aiohttp.ClientSession,
+    domain: str
+) -> Tuple[bool, str]:
+    """Check domain availability via RDAP. Rule 5: validates. Rule 7: explicit."""
+    assert session is not None, "Session required"
+    assert domain and '.' in domain, "Valid domain required"
+
+    url = f"https://rdap.org/domain/{domain}"
+
+    try:
+        async with session.get(
+            url,
+            timeout=aiohttp.ClientTimeout(total=MAX_TIMEOUT_SEC)
+        ) as resp:
+            if resp.status == 404:
+                return (True, "available")
+            if resp.status == 200:
+                return (False, "registered")
+            return (True, "unknown")
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return (True, "unknown")
+
+
+async def batch_verify_rdap(
+    session: aiohttp.ClientSession,
+    domains: List[str],
+    logger: logging.Logger
+) -> Dict[str, str]:
+    """Batch RDAP verification. Rule 2: bounded iteration. Rule 4: under 60 lines."""
+    assert session is not None, "Session required"
+    assert len(domains) <= MAX_TOTAL_DOMAINS, "Domain list exceeds max"
+
+    statuses: Dict[str, str] = {}
+    batch_size = 10
+    iterations = 0
+
+    for i in range(0, len(domains), batch_size):
+        if iterations >= MAX_LOOP_ITERATIONS:
+            break
+        iterations += 1
+
+        batch = domains[i:i + batch_size]
+        tasks = [check_rdap_availability(session, d) for d in batch]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for j, domain in enumerate(batch):
+            if isinstance(results[j], Exception):
+                statuses[domain] = "unknown"
+            else:
+                _is_available, status = results[j]
+                statuses[domain] = status
+
+        if (i + batch_size) % 100 < batch_size and i > 0:
+            logger.info(f"  RDAP verified {min(i + batch_size, len(domains))}/{len(domains)}")
+
+        await asyncio.sleep(1)
+
+    assert len(statuses) <= len(domains), "Statuses must not exceed input"
+    return statuses
+
+
 # ============ SCORING ============
 def calculate_score(
     pr: Optional[float],
@@ -850,7 +916,30 @@ async def run_pipeline(config: Config) -> PipelineStats:
             
             if results:
                 db.insert_batch(results)
-            
+
+            logger.info("\n[PHASE 4.5] Verifying availability via RDAP...")
+            all_scored = list(db._conn.execute(
+                "SELECT domain FROM domains WHERE score >= ? LIMIT ?",
+                (config.min_score_for_db, MAX_TOTAL_DOMAINS)
+            ))
+            scored_domains = [row[0] for row in all_scored]
+            rdap_statuses = await batch_verify_rdap(session, scored_domains, logger)
+
+            registered_count = 0
+            for domain, status in rdap_statuses.items():
+                if status == "registered":
+                    registered_count += 1
+                    db._conn.execute("DELETE FROM domains WHERE domain = ?", (domain,))
+                else:
+                    db._conn.execute(
+                        "UPDATE domains SET availability_status = ? WHERE domain = ?",
+                        (status, domain)
+                    )
+            db._conn.commit()
+
+            qualified -= registered_count
+            logger.info(f"  Removed {registered_count} registered domains")
+
             logger.info("\n[PHASE 5] Exporting...")
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             export_tier_csv(db, 'diamond', config.output_dir, timestamp, logger)

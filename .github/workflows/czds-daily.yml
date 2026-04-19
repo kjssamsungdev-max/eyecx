@@ -1,0 +1,202 @@
+name: CZDS Zone File Processing
+
+on:
+  schedule:
+    # Run at 1 AM UTC daily (auth + download + parse + diff + upload)
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      tld:
+        description: 'TLD to process (default: all approved)'
+        required: false
+        default: 'all'
+
+env:
+  PYTHON_VERSION: '3.11'
+  EYECX_API_URL: https://eyecx-api.kjssamsungdev.workers.dev
+  EYECX_API_SECRET: ${{ secrets.EYECX_API_SECRET }}
+  CZDS_USERNAME: ${{ secrets.CZDS_USERNAME }}
+  CZDS_PASSWORD: ${{ secrets.CZDS_PASSWORD }}
+
+jobs:
+  process-zones:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240  # 4 hours for large zone files
+    strategy:
+      fail-fast: false
+      matrix:
+        tld: [xyz, info, biz, net, org]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install aiohttp
+
+      - name: Check if TLD should be processed
+        id: check
+        run: |
+          INPUT_TLD="${{ github.event.inputs.tld || 'all' }}"
+          MATRIX_TLD="${{ matrix.tld }}"
+          if [ "$INPUT_TLD" = "all" ] || [ "$INPUT_TLD" = "$MATRIX_TLD" ]; then
+            echo "skip=false" >> $GITHUB_OUTPUT
+          else
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download raw zone file from R2
+        if: steps.check.outputs.skip != 'true'
+        id: download
+        run: |
+          TLD="${{ matrix.tld }}"
+          TODAY=$(date -u +%Y-%m-%d)
+          YESTERDAY=$(date -u -d "yesterday" +%Y-%m-%d)
+          R2_KEY="raw/${TLD}/${TLD}_${TODAY}.zone.gz"
+
+          echo "tld=$TLD" >> $GITHUB_OUTPUT
+          echo "today=$TODAY" >> $GITHUB_OUTPUT
+          echo "yesterday=$YESTERDAY" >> $GITHUB_OUTPUT
+
+          # Check if raw zone file exists in R2 via API
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $EYECX_API_SECRET" \
+            "$EYECX_API_URL/api/zones/${TLD}/${TODAY}")
+
+          if [ "$STATUS" = "200" ]; then
+            echo "Snapshot already exists for ${TLD} ${TODAY}, will check diff"
+            echo "has_snapshot=true" >> $GITHUB_OUTPUT
+          else
+            echo "No snapshot yet, need to download and parse"
+            echo "has_snapshot=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Authenticate with CZDS and download zone file
+        if: steps.check.outputs.skip != 'true' && steps.download.outputs.has_snapshot != 'true'
+        id: czds
+        run: |
+          TLD="${{ matrix.tld }}"
+          TODAY="${{ steps.download.outputs.today }}"
+
+          # Authenticate with CZDS
+          echo "Authenticating with CZDS..."
+          TOKEN=$(curl -s -X POST \
+            "https://account-api.icann.org/api/authenticate" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"$CZDS_USERNAME\", \"password\": \"$CZDS_PASSWORD\"}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
+
+          if [ -z "$TOKEN" ]; then
+            echo "CZDS authentication failed"
+            exit 1
+          fi
+          echo "CZDS auth successful"
+
+          # Download zone file
+          echo "Downloading ${TLD} zone file..."
+          mkdir -p zone_snapshots/${TLD}
+          GZ_FILE="zone_snapshots/${TLD}/${TLD}_${TODAY}.txt.gz"
+
+          curl -s -o "$GZ_FILE" \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://czds-api.icann.org/czds/downloads/${TLD}.zone"
+
+          SIZE=$(stat -c%s "$GZ_FILE" 2>/dev/null || echo "0")
+          echo "Downloaded: $GZ_FILE ($(( SIZE / 1024 / 1024 )) MB)"
+
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "File too small, download may have failed"
+            cat "$GZ_FILE"
+            exit 1
+          fi
+
+          echo "gz_file=$GZ_FILE" >> $GITHUB_OUTPUT
+
+      - name: Parse zone file and create snapshot
+        if: steps.check.outputs.skip != 'true' && steps.download.outputs.has_snapshot != 'true'
+        id: parse
+        run: |
+          TLD="${{ matrix.tld }}"
+          TODAY="${{ steps.download.outputs.today }}"
+          GZ_FILE="${{ steps.czds.outputs.gz_file }}"
+
+          echo "Parsing ${TLD} zone file..."
+          python3 eyecx_czds.py ingest --tld "$TLD" --file "$GZ_FILE" --date "$TODAY"
+
+          SNAP_FILE="zone_snapshots/${TLD}/${TLD}_${TODAY}.domains.txt"
+          DOMAIN_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo "0")
+          echo "Parsed: $DOMAIN_COUNT domains"
+          echo "domain_count=$DOMAIN_COUNT" >> $GITHUB_OUTPUT
+          echo "snap_file=$SNAP_FILE" >> $GITHUB_OUTPUT
+
+      - name: Upload snapshot to R2
+        if: steps.check.outputs.skip != 'true' && steps.download.outputs.has_snapshot != 'true'
+        run: |
+          TLD="${{ matrix.tld }}"
+          TODAY="${{ steps.download.outputs.today }}"
+          SNAP_FILE="${{ steps.parse.outputs.snap_file }}"
+
+          echo "Uploading snapshot to R2..."
+          RESP=$(curl -s -X PUT \
+            -H "Authorization: Bearer $EYECX_API_SECRET" \
+            -H "Content-Type: text/plain" \
+            --data-binary "@$SNAP_FILE" \
+            "$EYECX_API_URL/api/zones/${TLD}/${TODAY}")
+
+          echo "$RESP" | python3 -m json.tool
+          echo "Upload complete"
+
+      - name: Diff against yesterday
+        if: steps.check.outputs.skip != 'true'
+        id: diff
+        run: |
+          TLD="${{ matrix.tld }}"
+          TODAY="${{ steps.download.outputs.today }}"
+          YESTERDAY="${{ steps.download.outputs.yesterday }}"
+
+          echo "Diffing ${TLD}: ${YESTERDAY} vs ${TODAY}..."
+          RESP=$(curl -s -X POST \
+            -H "Authorization: Bearer $EYECX_API_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"tld\": \"$TLD\", \"yesterday\": \"$YESTERDAY\", \"today\": \"$TODAY\"}" \
+            "$EYECX_API_URL/api/zones/diff")
+
+          echo "$RESP" | python3 -m json.tool
+
+          DROPPED=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('dropped_count',0))")
+          ADDED=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('added_count',0))")
+
+          echo "dropped=$DROPPED" >> $GITHUB_OUTPUT
+          echo "added=$ADDED" >> $GITHUB_OUTPUT
+
+      - name: Report results
+        if: steps.check.outputs.skip != 'true' && always()
+        run: |
+          TLD="${{ matrix.tld }}"
+          echo "## CZDS Results: .${TLD}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Date | ${{ steps.download.outputs.today }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Domains parsed | ${{ steps.parse.outputs.domain_count || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dropped | ${{ steps.diff.outputs.dropped || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Added | ${{ steps.diff.outputs.added || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+
+  # Clean up old zone files from R2 (keep 7 days)
+  cleanup:
+    needs: process-zones
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Check CZDS status
+        run: |
+          curl -s \
+            -H "Authorization: Bearer ${{ secrets.EYECX_API_SECRET }}" \
+            "${{ env.EYECX_API_URL }}/api/czds/status" | python3 -m json.tool
