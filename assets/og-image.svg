@@ -55,16 +55,16 @@
   
   <!-- Tagline -->
   <text x="600" y="480" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" fill="#71717a">
-    Expired Domain Intelligence Platform
+    Expired domain intelligence from ICANN zone files
   </text>
   
   <!-- Stats bar -->
   <g transform="translate(200, 540)">
-    <text x="0" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" fill="#22d3ee" font-weight="600">500K+</text>
-    <text x="80" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" fill="#71717a">domains/day</text>
-    
-    <text x="280" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" fill="#a78bfa" font-weight="600">6</text>
-    <text x="300" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" fill="#71717a">data sources</text>
+    <text x="0" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" fill="#22d3ee" font-weight="600">23M+</text>
+    <text x="70" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" fill="#71717a">domains/day</text>
+
+    <text x="260" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" fill="#a78bfa" font-weight="600">CZDS</text>
+    <text x="320" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" fill="#71717a">zone files</text>
     
     <text x="460" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" fill="#34d399" font-weight="600">$0</text>
     <text x="500" y="0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" fill="#71717a">self-hosted</text>
