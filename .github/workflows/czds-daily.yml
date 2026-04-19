@@ -19,18 +19,19 @@ env:
   CZDS_PASSWORD: ${{ secrets.CZDS_PASSWORD }}
 
 jobs:
-  # Step 1: Authenticate and discover which TLDs are approved
+  # Step 1: Discover which TLDs are approved and their download URLs
   discover:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      token: ${{ steps.auth.outputs.token }}
       approved_tlds: ${{ steps.zones.outputs.approved_tlds }}
+      zone_urls: ${{ steps.zones.outputs.zone_urls }}
 
     steps:
-      - name: Authenticate with CZDS
-        id: auth
+      - name: Authenticate and get approved zones
+        id: zones
         run: |
+          # Authenticate with CZDS
           echo "Authenticating with CZDS..."
           RESP=$(curl -s -X POST \
             "https://account-api.icann.org/api/authenticate" \
@@ -45,43 +46,50 @@ jobs:
             exit 1
           fi
           echo "CZDS auth successful"
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Get approved zone list
-        id: zones
-        run: |
-          TOKEN="${{ steps.auth.outputs.token }}"
-
-          # Fetch approved download links from CZDS
+          # Fetch approved download links
           LINKS=$(curl -s \
             -H "Authorization: Bearer $TOKEN" \
             "https://czds-api.icann.org/czds/downloads/links")
 
-          echo "Raw CZDS links response (first 500 chars):"
-          echo "$LINKS" | head -c 500
+          echo "Raw CZDS links response (first 1000 chars):"
+          echo "$LINKS" | head -c 1000
 
-          # Extract TLD names from download URLs
-          # URLs look like: https://czds-api.icann.org/czds/downloads/xyz.zone
-          APPROVED=$(echo "$LINKS" | python3 -c "
+          # Build TLD list and TLD→URL map
+          python3 -c "
           import sys, json
+
+          raw = '''$LINKS'''
           try:
-              links = json.load(sys.stdin)
-              if isinstance(links, list):
-                  tlds = [url.split('/')[-1].replace('.zone','') for url in links]
-                  print(json.dumps(tlds))
-              else:
-                  print('[]')
+              links = json.loads(raw)
           except:
-              print('[]')
-          ")
+              print('Failed to parse CZDS links response', file=sys.stderr)
+              sys.exit(1)
 
-          echo "Approved TLDs: $APPROVED"
-          echo "approved_tlds=$APPROVED" >> $GITHUB_OUTPUT
+          if not isinstance(links, list) or len(links) == 0:
+              print('No approved zones found', file=sys.stderr)
+              sys.exit(1)
 
-          # Also filter by input TLD if specified
+          tld_list = []
+          url_map = {}
+          for url in links:
+              tld = url.split('/')[-1].replace('.zone', '')
+              tld_list.append(tld)
+              url_map[tld] = url
+
+          print(f'Approved TLDs ({len(tld_list)}): {sorted(tld_list)}', file=sys.stderr)
+
+          # Write outputs
+          with open('$GITHUB_OUTPUT', 'a') as f:
+              f.write(f'approved_tlds={json.dumps(tld_list)}\n')
+              f.write(f'zone_urls={json.dumps(url_map)}\n')
+          " 2>&1
+
+          # Validate input TLD if specified
           INPUT_TLD="${{ github.event.inputs.tld || 'all' }}"
           if [ "$INPUT_TLD" != "all" ]; then
-            echo "Filtering to requested TLD: $INPUT_TLD"
+            echo "Checking if $INPUT_TLD is approved..."
+            APPROVED=$(cat $GITHUB_OUTPUT | grep approved_tlds | cut -d= -f2-)
             IS_APPROVED=$(echo "$APPROVED" | python3 -c "
           import sys, json
           tlds = json.load(sys.stdin)
@@ -111,14 +119,12 @@ jobs:
           INPUT_TLD="${{ github.event.inputs.tld || 'all' }}"
           APPROVED='${{ needs.discover.outputs.approved_tlds }}'
 
-          # Check if this TLD is in the approved list
           IS_APPROVED=$(echo "$APPROVED" | python3 -c "
           import sys, json
           tlds = json.load(sys.stdin)
           print('yes' if '$MATRIX_TLD' in tlds else 'no')
           ")
 
-          # Check input filter
           if [ "$INPUT_TLD" != "all" ] && [ "$INPUT_TLD" != "$MATRIX_TLD" ]; then
             echo "Skipping $MATRIX_TLD (user requested $INPUT_TLD only)"
             echo "skip=true" >> $GITHUB_OUTPUT
@@ -157,13 +163,11 @@ jobs:
           echo "today=$TODAY" >> $GITHUB_OUTPUT
           echo "yesterday=$YESTERDAY" >> $GITHUB_OUTPUT
 
-          # Check if snapshot already exists in R2
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $EYECX_API_SECRET" \
             "$EYECX_API_URL/api/zones/${TLD}/${TODAY}")
 
           if [ "$STATUS" = "200" ]; then
-            # Verify it has real data (not a stub)
             SIZE=$(curl -s -H "Authorization: Bearer $EYECX_API_SECRET" \
               "$EYECX_API_URL/api/zones/${TLD}/${TODAY}" | wc -c)
             if [ "$SIZE" -gt 10000 ]; then
@@ -185,16 +189,42 @@ jobs:
           set -eo pipefail
           TLD="${{ matrix.tld }}"
           TODAY="${{ steps.existing.outputs.today }}"
-          TOKEN="${{ needs.discover.outputs.token }}"
 
-          echo "Downloading ${TLD} zone file..."
+          # Fresh authentication — tokens expire quickly
+          echo "Authenticating with CZDS..."
+          TOKEN=$(curl -s -X POST \
+            "https://account-api.icann.org/api/authenticate" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"$CZDS_USERNAME\", \"password\": \"$CZDS_PASSWORD\"}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
+
+          if [ -z "$TOKEN" ]; then
+            echo "::error::CZDS authentication failed"
+            exit 1
+          fi
+          echo "CZDS auth successful (fresh token)"
+
+          # Get the exact download URL from the discover job's URL map
+          ZONE_URLS='${{ needs.discover.outputs.zone_urls }}'
+          DOWNLOAD_URL=$(echo "$ZONE_URLS" | python3 -c "
+          import sys, json
+          urls = json.load(sys.stdin)
+          print(urls.get('$TLD', ''))
+          ")
+
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "::error::No download URL found for $TLD"
+            exit 1
+          fi
+          echo "Download URL: $DOWNLOAD_URL"
+
+          # Download zone file using the exact URL from CZDS
           mkdir -p zone_snapshots/${TLD}
           RAW_FILE="zone_snapshots/${TLD}/${TLD}_${TODAY}.zone"
 
-          # Download with HTTP status check
           HTTP_CODE=$(curl -s -o "$RAW_FILE" -w "%{http_code}" \
             -H "Authorization: Bearer $TOKEN" \
-            "https://czds-api.icann.org/czds/downloads/${TLD}.zone")
+            "$DOWNLOAD_URL")
 
           echo "CZDS HTTP response: $HTTP_CODE"
 
@@ -228,7 +258,6 @@ jobs:
             GZ_FILE="${RAW_FILE}.gz"
             mv "$RAW_FILE" "$GZ_FILE"
           else
-            # Verify it looks like zone file content
             if head -20 "$RAW_FILE" | grep -qiE '^\s*(;|.*\s+(SOA|NS|IN)\s+)'; then
               echo "File is a valid plain-text zone file"
             else
