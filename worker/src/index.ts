@@ -209,6 +209,15 @@ export default {
         if (request.method === 'GET' && tld && !date) {
           return await listZoneSnapshots(tld, env);
         }
+        if (request.method === 'DELETE' && tld && date) {
+          const key = `snapshots/${tld}/${tld}_${date}.domains.txt`;
+          await env.ZONES.delete(key);
+          const droppedKey = `dropped/${tld}/dropped_${tld}_${date}.txt`;
+          await env.ZONES.delete(droppedKey);
+          const rawKey = `raw/${tld}/${tld}_${date}.zone.gz`;
+          await env.ZONES.delete(rawKey);
+          return json({ deleted: [key, droppedKey, rawKey] });
+        }
       }
 
       // POST /api/verify-domains - RDAP verify domains in D1, remove registered
