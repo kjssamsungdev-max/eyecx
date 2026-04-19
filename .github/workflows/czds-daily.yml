@@ -163,22 +163,25 @@ jobs:
           echo "today=$TODAY" >> $GITHUB_OUTPUT
           echo "yesterday=$YESTERDAY" >> $GITHUB_OUTPUT
 
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $EYECX_API_SECRET" \
-            "$EYECX_API_URL/api/zones/${TLD}/${TODAY}")
+          # Check R2 directly via S3 API (avoids Worker body-size limits)
+          R2_KEY="snapshots/${TLD}/${TLD}_${TODAY}.domains.txt"
+          R2_ENDPOINT="https://dbaac4c99956159d7594d90033b0224d.r2.cloudflarestorage.com"
 
-          if [ "$STATUS" = "200" ]; then
-            SIZE=$(curl -s -H "Authorization: Bearer $EYECX_API_SECRET" \
-              "$EYECX_API_URL/api/zones/${TLD}/${TODAY}" | wc -c)
-            if [ "$SIZE" -gt 10000 ]; then
-              echo "Real snapshot exists for ${TLD} ${TODAY} (${SIZE} bytes)"
-              echo "has_snapshot=true" >> $GITHUB_OUTPUT
-            else
-              echo "Stub snapshot found (${SIZE} bytes), re-downloading"
-              echo "has_snapshot=false" >> $GITHUB_OUTPUT
-            fi
+          OBJ_SIZE=$(AWS_ACCESS_KEY_ID="${{ secrets.R2_ACCESS_KEY_ID }}" \
+            AWS_SECRET_ACCESS_KEY="${{ secrets.R2_SECRET_ACCESS_KEY }}" \
+            AWS_DEFAULT_REGION=auto \
+            aws s3api head-object \
+              --bucket eyecx-zones \
+              --key "$R2_KEY" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --query "ContentLength" \
+              --output text 2>/dev/null || echo "0")
+
+          if [ "$OBJ_SIZE" -gt 10000 ]; then
+            echo "Real snapshot exists: $R2_KEY (${OBJ_SIZE} bytes)"
+            echo "has_snapshot=true" >> $GITHUB_OUTPUT
           else
-            echo "No snapshot for ${TLD} ${TODAY}"
+            echo "No valid snapshot for ${TLD} ${TODAY}"
             echo "has_snapshot=false" >> $GITHUB_OUTPUT
           fi
 
@@ -301,20 +304,26 @@ jobs:
 
       - name: Upload snapshot to R2
         if: steps.check.outputs.skip != 'true' && steps.existing.outputs.has_snapshot != 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
         run: |
           TLD="${{ matrix.tld }}"
           TODAY="${{ steps.existing.outputs.today }}"
           SNAP_FILE="${{ steps.parse.outputs.snap_file }}"
+          R2_KEY="snapshots/${TLD}/${TLD}_${TODAY}.domains.txt"
+          R2_ENDPOINT="https://dbaac4c99956159d7594d90033b0224d.r2.cloudflarestorage.com"
 
-          echo "Uploading snapshot to R2..."
-          RESP=$(curl -s -X PUT \
-            -H "Authorization: Bearer $EYECX_API_SECRET" \
-            -H "Content-Type: text/plain" \
-            --data-binary "@$SNAP_FILE" \
-            "$EYECX_API_URL/api/zones/${TLD}/${TODAY}")
+          SIZE=$(stat -c%s "$SNAP_FILE" 2>/dev/null || echo "0")
+          echo "Uploading $R2_KEY to R2 ($(( SIZE / 1024 / 1024 )) MB)..."
 
-          echo "$RESP" | python3 -m json.tool
-          echo "Upload complete"
+          aws s3 cp "$SNAP_FILE" "s3://eyecx-zones/${R2_KEY}" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "text/plain" \
+            --no-progress
+
+          echo "Upload complete: $R2_KEY"
 
       - name: Diff against yesterday
         if: steps.check.outputs.skip != 'true'
