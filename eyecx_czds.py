@@ -187,25 +187,36 @@ async def download_zone_file(
 
 
 # ============ PARSE ============
-def extract_domains_from_gz(gz_path: str) -> FrozenSet[str]:
-    """Extract unique domain names from NS records in a gzipped zone file.
+def _is_gzipped(file_path: str) -> bool:
+    """Check if a file is gzip-compressed by reading the magic bytes."""
+    try:
+        with open(file_path, "rb") as fh:
+            return fh.read(2) == b'\x1f\x8b'
+    except OSError:
+        return False
 
+
+def extract_domains_from_gz(gz_path: str) -> FrozenSet[str]:
+    """Extract unique domain names from NS records in a zone file.
+
+    Handles both gzipped and plain text zone files.
     Streams line-by-line; never loads whole file into memory.
     Rule 2: bounded to MAX_ZONE_LINES.
     Rule 3: streaming, bounded set size.
     Rule 5: assertions on input and output.
     """
     assert os.path.isfile(gz_path), f"File not found: {gz_path}"
-    assert gz_path.endswith(".txt.gz"), "Expected .txt.gz file"
 
     logger = create_logger("czds.parse")
     domains: set[str] = set()
     lines_read = 0
+    is_gz = _is_gzipped(gz_path)
 
-    logger.info("Parsing zone file: %s", gz_path)
+    logger.info("Parsing zone file: %s (gzipped: %s)", gz_path, is_gz)
     start = time.monotonic()
 
-    with gzip.open(gz_path, "rt", encoding="utf-8", errors="replace") as fh:
+    opener = gzip.open if is_gz else open
+    with opener(gz_path, "rt", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             lines_read += 1
             if lines_read > MAX_ZONE_LINES:

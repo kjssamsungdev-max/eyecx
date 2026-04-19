@@ -101,19 +101,31 @@ jobs:
           # Download zone file
           echo "Downloading ${TLD} zone file..."
           mkdir -p zone_snapshots/${TLD}
-          GZ_FILE="zone_snapshots/${TLD}/${TLD}_${TODAY}.txt.gz"
+          RAW_FILE="zone_snapshots/${TLD}/${TLD}_${TODAY}.zone"
 
-          curl -s -o "$GZ_FILE" \
+          curl -s -o "$RAW_FILE" \
             -H "Authorization: Bearer $TOKEN" \
             "https://czds-api.icann.org/czds/downloads/${TLD}.zone"
 
-          SIZE=$(stat -c%s "$GZ_FILE" 2>/dev/null || echo "0")
-          echo "Downloaded: $GZ_FILE ($(( SIZE / 1024 / 1024 )) MB)"
+          SIZE=$(stat -c%s "$RAW_FILE" 2>/dev/null || echo "0")
+          echo "Downloaded: $RAW_FILE ($(( SIZE / 1024 / 1024 )) MB)"
 
           if [ "$SIZE" -lt 1000 ]; then
             echo "File too small, download may have failed"
-            cat "$GZ_FILE"
+            head -c 500 "$RAW_FILE"
             exit 1
+          fi
+
+          # Detect if gzipped or plain text
+          MAGIC=$(xxd -l 2 -p "$RAW_FILE")
+          if [ "$MAGIC" = "1f8b" ]; then
+            echo "File is gzipped"
+            GZ_FILE="${RAW_FILE}.gz"
+            mv "$RAW_FILE" "$GZ_FILE"
+          else
+            echo "File is plain text, compressing..."
+            gzip -c "$RAW_FILE" > "${RAW_FILE}.gz"
+            GZ_FILE="${RAW_FILE}.gz"
           fi
 
           echo "gz_file=$GZ_FILE" >> $GITHUB_OUTPUT
@@ -126,11 +138,12 @@ jobs:
           TODAY="${{ steps.download.outputs.today }}"
           GZ_FILE="${{ steps.czds.outputs.gz_file }}"
 
+          set -eo pipefail
           echo "Parsing ${TLD} zone file..."
           python3 eyecx_czds.py ingest --tld "$TLD" --file "$GZ_FILE" --date "$TODAY"
 
           SNAP_FILE="zone_snapshots/${TLD}/${TLD}_${TODAY}.domains.txt"
-          DOMAIN_COUNT=$(wc -l < "$SNAP_FILE" 2>/dev/null || echo "0")
+          DOMAIN_COUNT=$(wc -l < "$SNAP_FILE")
           echo "Parsed: $DOMAIN_COUNT domains"
           echo "domain_count=$DOMAIN_COUNT" >> $GITHUB_OUTPUT
           echo "snap_file=$SNAP_FILE" >> $GITHUB_OUTPUT
