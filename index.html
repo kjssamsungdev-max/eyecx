@@ -1326,10 +1326,23 @@
         if (!user || user.role !== 'admin') { navigate('/login'); return; }
         document.getElementById('view-admin').classList.add('active');
 
-        const statsResp = await apiFetch('/api/admin/stats');
+        const [statsResp, fbResp] = await Promise.all([
+            apiFetch('/api/admin/stats'),
+            apiFetch('/api/admin/feedback/summary'),
+        ]);
         const stats = await statsResp.json();
-        document.getElementById('admin-stats').innerHTML = Object.entries(stats)
-            .map(([k, v]) => `<div class="stat-card"><div class="val">${v}</div><div class="lbl">${k}</div></div>`).join('');
+        const fb = await fbResp.json();
+
+        const fbMap = {};
+        for (const c of (fb.counts || [])) fbMap[c.signal] = c.count;
+
+        document.getElementById('admin-stats').innerHTML =
+            Object.entries(stats)
+                .map(([k, v]) => `<div class="stat-card"><div class="val">${v}</div><div class="lbl">${k}</div></div>`).join('') +
+            ['saved', 'dismissed', 'bought', 'passed']
+                .map(s => `<div class="stat-card"><div class="val" style="color:${
+                    s==='saved'?'var(--accent)':s==='bought'?'var(--success)':s==='dismissed'?'#f87171':'var(--muted)'
+                }">${fbMap[s]||0}</div><div class="lbl">${s}</div></div>`).join('');
 
         // Tab switching
         const allTabs = ['admin-domains','admin-curated','admin-users','admin-content','admin-waitlist'];
