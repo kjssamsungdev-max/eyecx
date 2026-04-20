@@ -1715,16 +1715,18 @@
     async function loadBlog(path) {
         document.getElementById('view-blog').classList.add('active');
 
-        const match = path.match(/^\/blog\/(.+)$/);
-        if (match) {
-            await loadArticle(match[1]);
-            return;
-        }
+        // Route: /blog/curated/:id
+        const curMatch = path.match(/^\/blog\/curated\/(\d+)$/);
+        if (curMatch) { await loadCuratedDetail(parseInt(curMatch[1])); return; }
 
+        // Route: /blog/:slug (article)
+        const artMatch = path.match(/^\/blog\/([a-z0-9-]+)$/);
+        if (artMatch) { await loadArticle(artMatch[1]); return; }
+
+        // List view
         document.getElementById('blog-list').style.display = '';
         document.getElementById('blog-article').style.display = 'none';
 
-        // Tab switching
         document.querySelectorAll('#blog-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#blog-tabs button').forEach(b => b.classList.remove('active'));
@@ -1737,7 +1739,7 @@
 
         const [artResp, curResp] = await Promise.all([
             fetch(`${API}/api/articles`),
-            fetch(`${API}/api/curated?limit=20`),
+            fetch(`${API}/api/curated?limit=30`),
         ]);
         const artData = await artResp.json();
         const curData = await curResp.json();
@@ -1751,12 +1753,46 @@
             </div>`).join('')
             : '<p style="color:var(--muted)">No articles yet.</p>';
 
-        document.getElementById('blog-curated').innerHTML = (curData.articles||[]).map(a => `<div class="card">
-            <div class="card-title"><a href="${a.url}" target="_blank">${a.title}</a></div>
-            <div class="card-meta"><span>${a.source_name}</span><span>${a.category}</span>
-            <span>${a.published_at?.slice(0,10)||''}</span></div>
-            ${a.excerpt ? `<p style="color:var(--muted);margin-top:8px;font-size:0.9rem;">${a.excerpt.slice(0,200)}...</p>` : ''}
-        </div>`).join('');
+        document.getElementById('blog-curated').innerHTML = (curData.articles||[]).map(a => {
+            const days = Math.floor((Date.now() - new Date(a.published_at).getTime()) / 86400000);
+            const fc = days <= 7 ? 'var(--success)' : days <= 30 ? 'var(--gold)' : '#f87171';
+            return `<div class="card" style="cursor:pointer;" onclick="navigate('/blog/curated/${a.id}')">
+                <div class="card-title">${a.title}</div>
+                <div class="card-meta">
+                    <span>${a.source_name}</span><span>${a.category}</span>
+                    <span style="color:${fc};font-weight:600;">${days}d ago</span>
+                    <span>${a.views} views</span>
+                </div>
+                ${a.excerpt ? `<p style="color:var(--muted);margin-top:8px;font-size:0.9rem;">${a.excerpt.slice(0,200)}...</p>` : ''}
+            </div>`;
+        }).join('') || '<p style="color:var(--muted)">No curated content yet.</p>';
+    }
+
+    async function loadCuratedDetail(id) {
+        document.getElementById('blog-list').style.display = 'none';
+        const el = document.getElementById('blog-article');
+        el.style.display = '';
+        el.innerHTML = '<p style="color:var(--muted)">Loading...</p>';
+
+        const resp = await fetch(`${API}/api/curated/${id}`);
+        if (!resp.ok) { el.innerHTML = '<p>Item not found.</p>'; return; }
+        const a = await resp.json();
+        const tags = (() => { try { return JSON.parse(a.tags || '[]'); } catch { return []; } })();
+
+        el.innerHTML = `
+            <a href="/blog" class="back-link">&larr; Back to blog</a>
+            <h2>${a.title}</h2>
+            <div class="card-meta" style="margin-bottom:16px;">
+                <span>${a.source_name}</span><span>${a.category}</span>
+                <span>${a.published_at?.slice(0,10)||''}</span><span>${a.views} views</span>
+            </div>
+            ${tags.length ? `<div style="margin-bottom:16px;">${tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>` : ''}
+            <div class="card-body"><p>${a.excerpt || 'No preview available.'}</p></div>
+            <div style="margin-top:24px;">
+                <a href="${a.url}" target="_blank" rel="noopener" class="btn btn-primary">
+                    Read full article at ${a.source_name}
+                </a>
+            </div>`;
     }
 
     async function loadArticle(slug) {

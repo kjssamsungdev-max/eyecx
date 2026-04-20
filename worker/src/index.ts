@@ -278,6 +278,10 @@ export default {
     if (path === '/api/curated' && request.method === 'GET') {
       return await listCurated(url, env);
     }
+    if (path.match(/^\/api\/curated\/\d+$/) && request.method === 'GET') {
+      const id = parseInt(path.split('/')[3]);
+      return await getCuratedById(id, env);
+    }
     if (path === '/api/threads' && request.method === 'GET') {
       return await listThreads(url, env);
     }
@@ -1160,6 +1164,22 @@ async function listCurated(url: URL, env: Env): Promise<Response> {
   ).bind(limit, offset).all();
 
   return json({ articles: result.results || [], count: result.results?.length || 0 });
+}
+
+// ============ CURATED DETAIL ============
+
+async function getCuratedById(id: number, env: Env): Promise<Response> {
+  if (!id || id < 1) return error('Valid ID required');
+
+  const item = await env.DB.prepare(
+    `SELECT id, source_id, source_name, title, url, excerpt, author,
+     published_at, category, tags, quality_score, views
+     FROM curated_content WHERE id = ?`
+  ).bind(id).first();
+
+  if (!item) return error('Curated item not found', 404);
+  await env.DB.prepare('UPDATE curated_content SET views = views + 1 WHERE id = ?').bind(id).run();
+  return json(item);
 }
 
 // ============ ADMIN HANDLERS ============
