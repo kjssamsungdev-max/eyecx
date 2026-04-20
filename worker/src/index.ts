@@ -172,57 +172,42 @@ const CZDS_TLDS = ['xyz', 'info', 'biz', 'net', 'org'];
 
 // Main handler
 export default {
-  // Cron trigger: runs daily at 1 AM UTC
+  // Cron triggers: CZDS at 1 AM UTC, RSS curation every 6 hours
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    console.log('CZDS cron triggered:', new Date().toISOString());
+    const hour = new Date().getUTCHours();
 
-    if (!env.CZDS_USERNAME || !env.CZDS_PASSWORD) {
-      console.error('CZDS credentials not set. Run: npx wrangler secret put CZDS_USERNAME / CZDS_PASSWORD');
-      return;
+    // RSS curation runs every 6 hours
+    try {
+      console.log('RSS curation starting...');
+      const result = await runRssCuration(env);
+      console.log(`RSS curation done: ${result.inserted} new, ${result.errors} errors`);
+    } catch (e) {
+      console.error('RSS curation error:', e);
     }
 
-    try {
-      // 1. Authenticate with CZDS
-      const token = await czdsAuthenticate(env.CZDS_USERNAME, env.CZDS_PASSWORD);
-      if (!token) {
-        console.error('CZDS authentication failed');
-        return;
-      }
-      console.log('CZDS auth successful');
-
-      // 2. Get list of approved zones
-      const approvedZones = await czdsGetApprovedZones(token);
-      console.log(`CZDS approved zones: ${approvedZones.length}`);
-
-      // 3. Filter to our target TLDs
-      const today = new Date().toISOString().split('T')[0];
-      const targetZones = approvedZones.filter(url => {
-        const tld = url.split('/').pop()?.replace('.zone', '') || '';
-        return CZDS_TLDS.includes(tld);
-      });
-      console.log(`Target zones to download: ${targetZones.length}`);
-
-      // 4. Stream each zone file to R2
-      for (const zoneUrl of targetZones) {
-        const tld = zoneUrl.split('/').pop()?.replace('.zone', '') || '';
-        const r2Key = `raw/${tld}/${tld}_${today}.zone.gz`;
-
-        // Skip if already downloaded today
-        const existing = await env.ZONES.head(r2Key);
-        if (existing) {
-          console.log(`Already have ${r2Key}, skipping`);
-          continue;
+    // CZDS only at 1 AM (note: ICANN blocks CF Worker IPs, so this is a no-op
+    // in practice — CZDS downloads happen via GitHub Actions instead)
+    if (hour === 1 && env.CZDS_USERNAME && env.CZDS_PASSWORD) {
+      try {
+        const token = await czdsAuthenticate(env.CZDS_USERNAME, env.CZDS_PASSWORD);
+        if (token) {
+          const approvedZones = await czdsGetApprovedZones(token);
+          const today = new Date().toISOString().split('T')[0];
+          const targetZones = approvedZones.filter(url => {
+            const tld = url.split('/').pop()?.replace('.zone', '') || '';
+            return CZDS_TLDS.includes(tld);
+          });
+          for (const zoneUrl of targetZones) {
+            const tld = zoneUrl.split('/').pop()?.replace('.zone', '') || '';
+            const r2Key = `raw/${tld}/${tld}_${today}.zone.gz`;
+            if (!(await env.ZONES.head(r2Key))) {
+              await czdsStreamToR2(zoneUrl, token, r2Key, env.ZONES);
+            }
+          }
         }
-
-        console.log(`Downloading ${tld} zone file...`);
-        const ok = await czdsStreamToR2(zoneUrl, token, r2Key, env.ZONES);
-        console.log(`${tld}: ${ok ? 'success' : 'failed'}`);
+      } catch (e) {
+        console.error('CZDS cron error:', e);
       }
-
-      // 5. Log completion
-      console.log('CZDS cron complete:', new Date().toISOString());
-    } catch (e) {
-      console.error('CZDS cron error:', e);
     }
   },
 
@@ -345,6 +330,14 @@ export default {
       const [user, err] = await requireAdmin(request, env);
       if (err) return err;
       return await adminStats(env);
+    }
+
+    // POST /api/admin/curation/run - Manual trigger RSS curation
+    if (path === '/api/admin/curation/run' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const result = await runRssCuration(env);
+      return json(result);
     }
 
     // ============ BEARER API_SECRET ROUTES (existing) ============
@@ -1383,6 +1376,137 @@ async function czdsStatus(env: Env): Promise<Response> {
     snapshots: snapList.objects.map(format),
     dropped_lists: droppedList.objects.map(format),
   });
+}
+
+// ============ RSS CURATION ============
+
+interface CurationSource {
+  id: string;
+  name: string;
+  feed_url: string;
+  category: string;
+  enabled: number;
+}
+
+async function runRssCuration(env: Env): Promise<{ sources: number; fetched: number; inserted: number; errors: number }> {
+  const sources = await env.DB.prepare(
+    'SELECT id, name, feed_url, category, enabled FROM curated_sources WHERE enabled = 1'
+  ).all<CurationSource>();
+
+  let fetched = 0, inserted = 0, errors = 0;
+
+  for (const source of (sources.results || [])) {
+    try {
+      const newItems = await fetchAndCurateFeed(source, env);
+      fetched++;
+      inserted += newItems;
+
+      await env.DB.prepare(
+        'UPDATE curated_sources SET last_fetched_at = datetime(\'now\'), total_items = total_items + ? WHERE id = ?'
+      ).bind(newItems, source.id).run();
+    } catch (e) {
+      console.error(`RSS error for ${source.name}: ${e}`);
+      errors++;
+    }
+  }
+
+  return { sources: sources.results?.length || 0, fetched, inserted, errors };
+}
+
+async function fetchAndCurateFeed(source: CurationSource, env: Env): Promise<number> {
+  const resp = await fetch(source.feed_url, {
+    headers: { 'User-Agent': 'EyeCX/1.0 RSS Curator' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!resp.ok) return 0;
+
+  const xml = await resp.text();
+  const items = parseRssItems(xml, 50);
+  let inserted = 0;
+
+  for (const item of items) {
+    if (!item.url || !item.title) continue;
+
+    // Dedupe by URL
+    const exists = await env.DB.prepare(
+      'SELECT id FROM curated_content WHERE url = ?'
+    ).bind(item.url).first();
+    if (exists) continue;
+
+    const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 100);
+    const excerpt = (item.description || '').slice(0, 500);
+    const tags = extractTags(item.title + ' ' + excerpt);
+
+    await env.DB.prepare(
+      `INSERT INTO curated_content (source_id, source_name, title, url, excerpt, author,
+       published_at, category, tags, slug, quality_score, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')`
+    ).bind(
+      source.id, source.name, item.title, item.url, excerpt,
+      item.author || '', item.pubDate || new Date().toISOString(),
+      source.category, JSON.stringify(tags), slug, 50
+    ).run();
+    inserted++;
+  }
+
+  return inserted;
+}
+
+function parseRssItems(xml: string, limit: number): Array<{
+  title: string; url: string; description: string; author: string; pubDate: string;
+}> {
+  const items: Array<{ title: string; url: string; description: string; author: string; pubDate: string }> = [];
+
+  // Simple RSS/Atom parser — extract items via regex (no XML lib in Workers)
+  const isAtom = xml.includes('<feed') && xml.includes('<entry');
+
+  if (isAtom) {
+    const entries = xml.split('<entry').slice(1, limit + 1);
+    for (const entry of entries) {
+      items.push({
+        title: extractTag(entry, 'title'),
+        url: extractAtomLink(entry),
+        description: extractTag(entry, 'summary') || extractTag(entry, 'content'),
+        author: extractTag(entry, 'name'),
+        pubDate: extractTag(entry, 'published') || extractTag(entry, 'updated'),
+      });
+    }
+  } else {
+    const rssItems = xml.split('<item').slice(1, limit + 1);
+    for (const item of rssItems) {
+      items.push({
+        title: extractTag(item, 'title'),
+        url: extractTag(item, 'link'),
+        description: extractTag(item, 'description'),
+        author: extractTag(item, 'dc:creator') || extractTag(item, 'author'),
+        pubDate: extractTag(item, 'pubDate') || extractTag(item, 'dc:date'),
+      });
+    }
+  }
+
+  return items;
+}
+
+function extractTag(xml: string, tag: string): string {
+  const match = xml.match(new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>|<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
+  return (match?.[1] || match?.[2] || '').trim();
+}
+
+function extractAtomLink(entry: string): string {
+  const match = entry.match(/<link[^>]*href="([^"]*)"[^>]*rel="alternate"/);
+  if (match) return match[1];
+  const fallback = entry.match(/<link[^>]*href="([^"]*)"/);
+  return fallback?.[1] || '';
+}
+
+function extractTags(text: string): string[] {
+  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/);
+  const stopwords = new Set(['the','a','an','is','are','was','were','be','been','to','of','in','for','on','with','at','by','from','it','this','that','and','or','but','not','no','has','have','had']);
+  const freq: Record<string, number> = {};
+  for (const w of words) {
+    if (w.length > 3 && !stopwords.has(w)) freq[w] = (freq[w] || 0) + 1;
+  }
+  return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
 }
 
 // ============ CZDS HELPERS ============

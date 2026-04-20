@@ -20,10 +20,9 @@ bucket_name = "eyecx-zones"
 # CZDS_USERNAME         - ICANN CZDS email
 # CZDS_PASSWORD         - ICANN CZDS password
 
-# Note: CZDS auth is blocked from CF Worker IPs (503).
-# Zone file downloads run via GitHub Actions instead.
-# [triggers]
-# crons = ["0 1 * * *"]
+# Cron: RSS curation every 6 hours (CZDS handled by GitHub Actions)
+[triggers]
+crons = ["0 */6 * * *"]
 
 [vars]
 ENVIRONMENT = "production"
