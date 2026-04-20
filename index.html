@@ -1444,7 +1444,31 @@
         if (domainFilters.tier) params.set('tier', domainFilters.tier);
         if (domainFilters.tld) params.set('tld', domainFilters.tld);
 
+        // Fetch scan history for the control bar
+        let scanInfo = '';
+        try {
+            const hResp = await apiFetch('/api/admin/scan/history');
+            const hData = await hResp.json();
+            const last = (hData.history || [])[0];
+            const run = hData.latest_run;
+            if (last) {
+                scanInfo = `Last scan: ${last.scan_date} (qualified: ${last.total_qualified}, diamonds: ${last.diamonds}, golds: ${last.golds})`;
+            } else if (run) {
+                scanInfo = `Latest run: ${run.status} ${run.conclusion || ''} (${run.created_at?.slice(0,10)})`;
+            } else {
+                scanInfo = 'No scans yet';
+            }
+        } catch { scanInfo = 'Scan history unavailable'; }
+
         el.innerHTML = `
+            <div class="card" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                <span style="color:var(--muted);font-size:0.9rem;" id="scan-info">${scanInfo}</span>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" style="padding:8px 16px;" id="run-scan-btn">Run scan now</button>
+                    <button class="vote-btn" id="scan-history-btn">Scan history</button>
+                </div>
+            </div>
+            <div id="scan-history-modal" style="display:none;" class="card"></div>
             <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
                 <select id="f-tier" class="form-input" style="width:auto;padding:8px 12px;">
                     <option value="">All tiers</option>
@@ -1486,6 +1510,41 @@
                 </td>
             </tr>`).join('')}
         </table>`;
+
+        // Scan control handlers
+        document.getElementById('run-scan-btn').onclick = async () => {
+            const btn = document.getElementById('run-scan-btn');
+            const info = document.getElementById('scan-info');
+            btn.disabled = true; info.textContent = 'Triggering scan...';
+            try {
+                const r = await apiFetch('/api/admin/scan/trigger', { method: 'POST' });
+                const d = await r.json();
+                if (d.ok) {
+                    info.textContent = 'Scan triggered! Opening Actions...';
+                    info.style.color = 'var(--success)';
+                    window.open('https://github.com/kjssamsungdev-max/eyecx/actions/workflows/daily-scan.yml', '_blank');
+                } else {
+                    info.textContent = d.error || 'Failed to trigger';
+                    info.style.color = '#f87171';
+                }
+            } catch { info.textContent = 'Network error'; info.style.color = '#f87171'; }
+            btn.disabled = false;
+        };
+
+        document.getElementById('scan-history-btn').onclick = async () => {
+            const modal = document.getElementById('scan-history-modal');
+            if (modal.style.display !== 'none') { modal.style.display = 'none'; return; }
+            modal.innerHTML = '<p style="color:var(--muted)">Loading...</p>';
+            modal.style.display = '';
+            const r = await apiFetch('/api/admin/scan/history');
+            const d = await r.json();
+            const rows = d.history || [];
+            modal.innerHTML = rows.length
+                ? `<table class="data-table"><tr><th>Date</th><th>Total</th><th>Qualified</th><th>Diamonds</th><th>Golds</th><th>Duration</th></tr>
+                   ${rows.map(r => `<tr><td>${r.scan_date}</td><td>${r.total_scanned}</td><td>${r.total_qualified}</td>
+                   <td>${r.diamonds}</td><td>${r.golds}</td><td>${r.duration_sec}s</td></tr>`).join('')}</table>`
+                : '<p style="color:var(--muted)">No scan history yet. Run the daily scan pipeline.</p>';
+        };
     }
 
     function applyDomainFilters() {

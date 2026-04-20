@@ -21,6 +21,7 @@ interface Env {
   CLOUDFLARE_ACCOUNT_ID: string;
   CZDS_USERNAME: string;
   CZDS_PASSWORD: string;
+  GITHUB_TOKEN: string;
 }
 
 interface SessionUser {
@@ -369,6 +370,77 @@ export default {
       return json(result);
     }
 
+    // POST /api/admin/scan/trigger - Trigger daily scan via GitHub Actions
+    if (path === '/api/admin/scan/trigger' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      if (!env.GITHUB_TOKEN) {
+        return error('GITHUB_TOKEN not configured. Run: npx wrangler secret put GITHUB_TOKEN', 400);
+      }
+      try {
+        const resp = await fetch(
+          'https://api.github.com/repos/kjssamsungdev-max/eyecx/actions/workflows/daily-scan.yml/dispatches',
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+              'Accept': 'application/vnd.github.v3+json',
+              'User-Agent': 'EyeCX-Worker',
+            },
+            body: JSON.stringify({ ref: 'main' }),
+          }
+        );
+        if (resp.status === 204) {
+          return json({ ok: true, triggered_at: new Date().toISOString() });
+        }
+        const body = await resp.text();
+        return json({ ok: false, error: `GitHub API ${resp.status}: ${body.slice(0, 200)}` }, resp.status);
+      } catch (e) {
+        return error(`Failed to trigger scan: ${e}`, 500);
+      }
+    }
+
+    // POST /api/check-availability (session auth — for marketplace users)
+    if (path === '/api/check-availability' && request.method === 'POST') {
+      const user = await authenticateSession(request, env);
+      if (user) {
+        const body = await request.json() as { domain: string };
+        return await checkAvailability(body.domain, env);
+      }
+      // Fall through to Bearer auth check below
+    }
+
+    // GET /api/admin/scan/history - Scan history + latest GH Actions run
+    if (path === '/api/admin/scan/history' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const history = await env.DB.prepare(
+        'SELECT * FROM scan_history ORDER BY scan_date DESC LIMIT 10'
+      ).all();
+
+      let latestRun: any = null;
+      if (env.GITHUB_TOKEN) {
+        try {
+          const resp = await fetch(
+            'https://api.github.com/repos/kjssamsungdev-max/eyecx/actions/workflows/daily-scan.yml/runs?per_page=1',
+            { headers: { 'Authorization': `Bearer ${env.GITHUB_TOKEN}`, 'User-Agent': 'EyeCX-Worker' } }
+          );
+          if (resp.ok) {
+            const data = await resp.json() as any;
+            const run = data.workflow_runs?.[0];
+            if (run) {
+              latestRun = {
+                id: run.id, status: run.status, conclusion: run.conclusion,
+                created_at: run.created_at, html_url: run.html_url,
+              };
+            }
+          }
+        } catch {}
+      }
+
+      return json({ history: history.results || [], latest_run: latestRun });
+    }
+
     // ============ BEARER API_SECRET ROUTES (existing) ============
 
     // Auth required for all other endpoints
@@ -502,6 +574,7 @@ async function getDomains(url: URL, env: Env): Promise<Response> {
   const offset = parseInt(url.searchParams.get('offset') || '0');
   const minScore = parseInt(url.searchParams.get('min_score') || '0');
   const tld = url.searchParams.get('tld');
+  const search = url.searchParams.get('search');
 
   let query = `
     SELECT domain, tld, potential_score, tier, estimated_flip_value,
@@ -520,6 +593,11 @@ async function getDomains(url: URL, env: Env): Promise<Response> {
   if (tld) {
     query += ' AND tld = ?';
     params.push(tld);
+  }
+
+  if (search && search.length >= 2) {
+    query += ' AND domain LIKE ?';
+    params.push(`%${search}%`);
   }
 
   query += ' ORDER BY potential_score DESC, first_seen DESC LIMIT ? OFFSET ?';
