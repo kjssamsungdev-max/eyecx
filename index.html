@@ -770,9 +770,9 @@
             <nav>
                 <ul class="nav-links">
                     <li><a href="/">Home</a></li>
+                    <li><a href="/marketplace">Marketplace</a></li>
                     <li><a href="/community">Community</a></li>
                     <li><a href="/blog">Blog</a></li>
-                    <li><a href="#pricing">Pricing</a></li>
                 </ul>
             </nav>
             <div style="display:flex;gap:8px;align-items:center;">
@@ -1169,6 +1169,37 @@
         </div>
     </div>
 
+    <div id="view-marketplace" class="app-view">
+        <div class="container">
+            <h2>Dropped Domains — Daily Feed from ICANN CZDS</h2>
+            <p style="color:var(--muted);margin-bottom:24px;">Domains that dropped from .xyz, .info, and .org zone files. Updated daily.</p>
+            <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+                <select id="mp-tier" class="form-input" style="width:auto;padding:8px 12px;">
+                    <option value="">All tiers</option>
+                    <option value="diamond">Diamond</option><option value="gold">Gold</option>
+                    <option value="silver">Silver</option><option value="bronze">Bronze</option>
+                </select>
+                <select id="mp-tld" class="form-input" style="width:auto;padding:8px 12px;">
+                    <option value="">All TLDs</option>
+                    <option value=".xyz">.xyz</option><option value=".info">.info</option>
+                    <option value=".org">.org</option>
+                </select>
+                <input id="mp-score" class="form-input" style="width:80px;padding:8px 12px;" type="number" min="0" max="100" placeholder="Min score" value="0">
+                <input id="mp-search" class="form-input" style="width:180px;padding:8px 12px;" type="text" placeholder="Search domain...">
+                <button class="btn btn-primary" style="padding:8px 16px;" id="mp-filter-btn">Filter</button>
+            </div>
+            <div id="mp-results"></div>
+            <div id="mp-pagination" style="display:flex;gap:12px;justify-content:center;margin-top:16px;"></div>
+        </div>
+    </div>
+
+    <!-- Domain detail modal -->
+    <div id="domain-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;overflow-y:auto;">
+        <div class="container" style="max-width:600px;margin-top:80px;">
+            <div class="card" id="domain-modal-content"></div>
+        </div>
+    </div>
+
     <footer>
         <div class="container">
             <p>© 2026 EyeCX · <a href="https://github.com/kjssamsungdev-max/eyecx">GitHub</a> · <a href="mailto:hello@eyecx.com">Contact</a> · Built by <a href="https://kjs.productions">KJS</a></p>
@@ -1227,7 +1258,7 @@
     }
 
     // ============ ROUTER ============
-    const routes = ['/', '/login', '/register', '/admin', '/community', '/blog'];
+    const routes = ['/', '/login', '/register', '/admin', '/community', '/blog', '/marketplace'];
 
     function navigate(path) {
         history.pushState(null, '', path);
@@ -1262,6 +1293,8 @@
             loadCommunity(path);
         } else if (path === '/blog' || path.startsWith('/blog/')) {
             loadBlog(path);
+        } else if (path === '/marketplace') {
+            loadMarketplace();
         } else {
             landing.style.display = '';
             footer.style.display = '';
@@ -1755,6 +1788,127 @@
                 <span>${a.views} views</span><span>${a.published_at?.slice(0,10)||''}</span>
             </div>
             <div class="card-body"><p>${rendered}</p></div>`;
+    }
+
+    // ============ MARKETPLACE ============
+    let mpPage = 0;
+    const MP_LIMIT = 50;
+
+    async function loadMarketplace() {
+        document.getElementById('view-marketplace').classList.add('active');
+
+        document.getElementById('mp-filter-btn').onclick = () => { mpPage = 0; renderMarketplace(); };
+        document.getElementById('mp-search').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { mpPage = 0; renderMarketplace(); }
+        });
+        await renderMarketplace();
+    }
+
+    async function renderMarketplace() {
+        const params = new URLSearchParams({
+            limit: String(MP_LIMIT), offset: String(mpPage * MP_LIMIT), min_score: '0',
+        });
+        const tier = document.getElementById('mp-tier').value;
+        const tld = document.getElementById('mp-tld').value;
+        const score = document.getElementById('mp-score').value;
+        const search = document.getElementById('mp-search').value.trim();
+        if (tier) params.set('tier', tier);
+        if (tld) params.set('tld', tld);
+        if (score) params.set('min_score', score);
+        if (search.length >= 2) params.set('search', search);
+
+        const el = document.getElementById('mp-results');
+        el.innerHTML = '<p style="color:var(--muted)">Loading...</p>';
+
+        const resp = await fetch(`${API}/api/domains?${params}`);
+        const data = await resp.json();
+        const domains = data.domains || [];
+        const user = getUser();
+
+        if (!domains.length) {
+            el.innerHTML = mpPage > 0
+                ? '<p style="color:var(--muted)">No more domains.</p>'
+                : '<p style="color:var(--muted)">No domains found. The daily scan pipeline populates this feed.</p>';
+            renderMpPagination(domains.length);
+            return;
+        }
+
+        const tierColors = { diamond: 'var(--diamond)', gold: 'var(--gold)', silver: '#94a3b8', bronze: '#cd7f32' };
+
+        el.innerHTML = `<table class="data-table">
+            <tr><th>Domain</th><th>TLD</th><th>Tier</th><th>Score</th><th>Value</th><th>Age</th><th>Snapshots</th><th>Actions</th></tr>
+            ${domains.map(d => `<tr>
+                <td><strong style="cursor:pointer;color:var(--accent);" onclick="showDomainModal('${d.domain}')">${d.domain}</strong></td>
+                <td>${d.tld}</td>
+                <td><span style="color:${tierColors[d.tier]||'var(--muted)'};font-weight:600;">${d.tier}</span></td>
+                <td>${d.potential_score}</td>
+                <td>$${d.estimated_flip_value}</td>
+                <td>${d.estimated_age_years ? d.estimated_age_years + 'y' : '-'}</td>
+                <td>${d.wayback_snapshots || '-'}</td>
+                <td>
+                    ${user
+                        ? `<button class="vote-btn" id="mp-check-${d.domain.replace(/\./g,'-')}" onclick="mpCheckAvail('${d.domain}')">Check availability</button>`
+                        : `<a href="/login" style="color:var(--muted);font-size:0.85rem;">Sign in to check</a>`}
+                </td>
+            </tr>`).join('')}
+        </table>`;
+
+        renderMpPagination(domains.length);
+    }
+
+    function renderMpPagination(count) {
+        const el = document.getElementById('mp-pagination');
+        el.innerHTML = `
+            ${mpPage > 0 ? `<button class="vote-btn" onclick="mpPage--;renderMarketplace()">Previous</button>` : ''}
+            <span style="color:var(--muted);font-size:0.9rem;">Page ${mpPage + 1}</span>
+            ${count >= MP_LIMIT ? `<button class="vote-btn" onclick="mpPage++;renderMarketplace()">Next</button>` : ''}`;
+    }
+
+    async function mpCheckAvail(domain) {
+        const btn = document.getElementById('mp-check-' + domain.replace(/\./g, '-'));
+        if (!btn) return;
+        btn.disabled = true; btn.textContent = 'Checking...';
+        const resp = await apiFetch('/api/check-availability', {
+            method: 'POST', body: JSON.stringify({ domain }),
+        });
+        const d = await resp.json();
+        if (d.available) {
+            const price = d.price ? `$${d.price}` : '';
+            btn.outerHTML = `<span style="color:var(--success);font-size:0.85rem;">Available ${price}</span>
+                <a href="https://dash.cloudflare.com/?to=/:account/domains/register/${domain}" target="_blank"
+                   class="vote-btn" style="margin-left:4px;">Buy</a>`;
+        } else {
+            btn.outerHTML = '<span style="color:#f87171;font-size:0.85rem;">Registered</span>';
+        }
+    }
+
+    function showDomainModal(domain) {
+        const modal = document.getElementById('domain-modal');
+        const content = document.getElementById('domain-modal-content');
+        content.innerHTML = '<p style="color:var(--muted)">Loading...</p>';
+        modal.style.display = '';
+        modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
+
+        fetch(`${API}/api/domains?search=${domain}&limit=1`).then(r => r.json()).then(data => {
+            const d = (data.domains || [])[0];
+            if (!d) { content.innerHTML = '<p>Domain not found.</p>'; return; }
+            content.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <h3>${d.domain}</h3>
+                    <button class="vote-btn" onclick="document.getElementById('domain-modal').style.display='none'">Close</button>
+                </div>
+                <table class="data-table" style="margin-top:16px;">
+                    <tr><td style="color:var(--muted)">TLD</td><td>${d.tld}</td></tr>
+                    <tr><td style="color:var(--muted)">Tier</td><td>${d.tier}</td></tr>
+                    <tr><td style="color:var(--muted)">Score</td><td>${d.potential_score}</td></tr>
+                    <tr><td style="color:var(--muted)">Flip value</td><td>$${d.estimated_flip_value}</td></tr>
+                    <tr><td style="color:var(--muted)">Page rank</td><td>${d.page_rank || '-'}</td></tr>
+                    <tr><td style="color:var(--muted)">Wayback snapshots</td><td>${d.wayback_snapshots || '-'}</td></tr>
+                    <tr><td style="color:var(--muted)">Age</td><td>${d.estimated_age_years ? d.estimated_age_years + ' years' : '-'}</td></tr>
+                    <tr><td style="color:var(--muted)">Availability</td><td>${d.availability_status || 'unknown'}</td></tr>
+                    <tr><td style="color:var(--muted)">First seen</td><td>${d.first_seen?.slice(0,10) || '-'}</td></tr>
+                </table>`;
+        });
     }
 
     // ============ COUNTDOWN + WAITLIST ============
