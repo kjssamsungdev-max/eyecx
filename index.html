@@ -1112,11 +1112,13 @@
             <div id="admin-stats" class="stats-grid"></div>
             <div class="tab-bar" id="admin-tabs">
                 <button class="active" data-tab="admin-domains">Domains</button>
+                <button data-tab="admin-curated">Curated</button>
                 <button data-tab="admin-users">Users</button>
                 <button data-tab="admin-content">Articles</button>
                 <button data-tab="admin-waitlist">Waitlist</button>
             </div>
             <div id="admin-domains"></div>
+            <div id="admin-curated" style="display:none;"></div>
             <div id="admin-users" style="display:none;"></div>
             <div id="admin-content" style="display:none;"></div>
             <div id="admin-waitlist" style="display:none;"></div>
@@ -1330,7 +1332,7 @@
             .map(([k, v]) => `<div class="stat-card"><div class="val">${v}</div><div class="lbl">${k}</div></div>`).join('');
 
         // Tab switching
-        const allTabs = ['admin-domains','admin-users','admin-content','admin-waitlist'];
+        const allTabs = ['admin-domains','admin-curated','admin-users','admin-content','admin-waitlist'];
         document.querySelectorAll('#admin-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
@@ -1362,6 +1364,62 @@
                 <div class="card-meta"><span>${a.category}</span><span>${a.views} views</span>
                 <span>${a.published_at?.slice(0,10)||'draft'}</span></div></div>`).join('')
             : '<p style="color:var(--muted)">No articles yet.</p>';
+
+        // Load curated
+        await loadAdminCurated();
+    }
+
+    async function loadAdminCurated() {
+        const el = document.getElementById('admin-curated');
+        el.innerHTML = '<p style="color:var(--muted)">Loading curated content...</p>';
+
+        const resp = await apiFetch('/api/curated?limit=50');
+        const data = await resp.json();
+        const items = data.articles || [];
+        const now = Date.now();
+
+        function freshness(pubDate) {
+            if (!pubDate) return { color: '#71717a', label: 'unknown' };
+            const days = Math.floor((now - new Date(pubDate).getTime()) / 86400000);
+            if (days <= 7) return { color: 'var(--success)', label: `${days}d` };
+            if (days <= 30) return { color: 'var(--gold)', label: `${days}d` };
+            return { color: '#f87171', label: `${days}d` };
+        }
+
+        el.innerHTML = `
+            <div style="margin-bottom:16px;">
+                <button class="btn btn-primary" style="padding:8px 16px;" id="fetch-rss-btn">Fetch now</button>
+                <span id="fetch-rss-msg" style="margin-left:12px;color:var(--muted);font-size:0.9rem;"></span>
+            </div>
+            ${items.length ? `<table class="data-table">
+                <tr><th>Source</th><th>Title</th><th>Category</th><th>Published</th><th>Fresh</th><th>Views</th></tr>
+                ${items.map(a => {
+                    const f = freshness(a.published_at);
+                    return `<tr>
+                        <td>${a.source_name}</td>
+                        <td><a href="${a.url}" target="_blank" style="color:var(--accent);">${a.title?.slice(0,60)}${a.title?.length>60?'...':''}</a></td>
+                        <td>${a.category}</td>
+                        <td>${a.published_at?.slice(0,10)||''}</td>
+                        <td><span style="color:${f.color};font-weight:600;">${f.label}</span></td>
+                        <td>${a.views}</td>
+                    </tr>`;
+                }).join('')}
+            </table>` : '<p style="color:var(--muted)">No curated content yet.</p>'}`;
+
+        document.getElementById('fetch-rss-btn').onclick = async () => {
+            const msg = document.getElementById('fetch-rss-msg');
+            const btn = document.getElementById('fetch-rss-btn');
+            btn.disabled = true;
+            msg.textContent = 'Fetching feeds...';
+            try {
+                const r = await apiFetch('/api/admin/curation/run', { method: 'POST' });
+                const d = await r.json();
+                msg.textContent = `Done: ${d.inserted} new articles from ${d.fetched}/${d.sources} sources (${d.errors} errors)`;
+                msg.style.color = 'var(--success)';
+                setTimeout(() => loadAdminCurated(), 1500);
+            } catch { msg.textContent = 'Failed'; msg.style.color = '#f87171'; }
+            btn.disabled = false;
+        };
     }
 
     // ============ ADMIN DOMAINS TAB ============
