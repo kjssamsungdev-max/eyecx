@@ -2,159 +2,186 @@ name: EyeCX Daily Scan
 
 on:
   schedule:
-    # Run at 2 AM UTC daily
-    - cron: '0 2 * * *'
+    # Run at 3 AM UTC daily (after czds-daily.yml at 1 AM)
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
-      max_seeds:
-        description: 'Maximum seeds to process'
+      date:
+        description: 'Date to process (YYYY-MM-DD, default: today)'
         required: false
-        default: '50'
-      min_score:
-        description: 'Minimum score threshold'
+        default: ''
+      limit:
+        description: 'Max domains to score per TLD'
         required: false
-        default: '40'
+        default: '5000'
 
 env:
   PYTHON_VERSION: '3.11'
   OPENPAGERANK_API_KEY: ${{ secrets.OPENPAGERANK_API_KEY }}
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  D1_DATABASE_ID: d33d4f46-5599-47f0-8b70-1b6ea0175496
+  R2_ENDPOINT: https://dbaac4c99956159d7594d90033b0224d.r2.cloudflarestorage.com
 
 jobs:
-  scan:
+  # Step 1: Diff zone snapshots to find dropped domains
+  diff-zones:
     runs-on: ubuntu-latest
-    timeout-minutes: 180  # 3 hours max
-    
+    timeout-minutes: 30
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+    outputs:
+      has_dropped: ${{ steps.diff.outputs.has_dropped }}
+      dropped_file: ${{ steps.diff.outputs.dropped_file }}
+      total_dropped: ${{ steps.diff.outputs.total_dropped }}
+
     steps:
-      - name: Checkout repository
+      - name: Diff zone snapshots
+        id: diff
+        run: |
+          set -eo pipefail
+          TODAY="${{ github.event.inputs.date || '' }}"
+          if [ -z "$TODAY" ]; then TODAY=$(date -u +%Y-%m-%d); fi
+          YESTERDAY=$(date -u -d "$TODAY - 1 day" +%Y-%m-%d)
+
+          echo "Diffing zones: $YESTERDAY vs $TODAY"
+          mkdir -p snapshots dropped
+
+          TOTAL=0
+          DROPPED_FILE="dropped/all_dropped_${TODAY}.txt"
+          > "$DROPPED_FILE"
+
+          for TLD in xyz info org; do
+            YKEY="snapshots/${TLD}/${TLD}_${YESTERDAY}.domains.txt"
+            TKEY="snapshots/${TLD}/${TLD}_${TODAY}.domains.txt"
+
+            echo "Downloading $TLD snapshots..."
+            aws s3 cp "s3://eyecx-zones/$YKEY" "snapshots/${TLD}_yesterday.txt" \
+              --endpoint-url "$R2_ENDPOINT" --no-progress 2>/dev/null || { echo "  No yesterday snapshot for $TLD"; continue; }
+            aws s3 cp "s3://eyecx-zones/$TKEY" "snapshots/${TLD}_today.txt" \
+              --endpoint-url "$R2_ENDPOINT" --no-progress 2>/dev/null || { echo "  No today snapshot for $TLD"; continue; }
+
+            echo "Diffing $TLD..."
+            # comm requires sorted files — snapshots are already sorted
+            comm -23 "snapshots/${TLD}_yesterday.txt" "snapshots/${TLD}_today.txt" > "dropped/${TLD}_dropped.txt"
+
+            COUNT=$(wc -l < "dropped/${TLD}_dropped.txt")
+            echo "  $TLD: $COUNT dropped domains"
+            cat "dropped/${TLD}_dropped.txt" >> "$DROPPED_FILE"
+            TOTAL=$((TOTAL + COUNT))
+
+            # Upload dropped list to R2
+            aws s3 cp "dropped/${TLD}_dropped.txt" \
+              "s3://eyecx-zones/dropped/${TLD}/dropped_${TLD}_${TODAY}.txt" \
+              --endpoint-url "$R2_ENDPOINT" --no-progress
+          done
+
+          echo "Total dropped: $TOTAL"
+          echo "total_dropped=$TOTAL" >> $GITHUB_OUTPUT
+          echo "dropped_file=$DROPPED_FILE" >> $GITHUB_OUTPUT
+
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "has_dropped=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_dropped=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload combined dropped file
+        if: steps.diff.outputs.has_dropped == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropped-domains
+          path: dropped/
+          retention-days: 7
+
+  # Step 2: Score dropped domains
+  score:
+    needs: diff-zones
+    if: needs.diff-zones.outputs.has_dropped == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    outputs:
+      qualified: ${{ steps.score.outputs.qualified }}
+
+    steps:
+      - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-      
+
       - name: Install dependencies
+        run: pip install aiohttp
+
+      - name: Download dropped domains
+        uses: actions/download-artifact@v4
+        with:
+          name: dropped-domains
+          path: dropped/
+
+      - name: Score domains
+        id: score
         run: |
-          pip install --upgrade pip
-          pip install aiohttp pandas tqdm
-      
-      - name: Download seed domains
-        run: |
-          # Download latest seeds from your source or use repo file
-          if [ -f "seeds.txt" ]; then
-            echo "Using seeds.txt from repo"
-          else
-            echo "techcrunch.com" > seeds.txt
-            echo "producthunt.com" >> seeds.txt
-            # Add more default seeds
+          set -eo pipefail
+          LIMIT="${{ github.event.inputs.limit || '5000' }}"
+          DROPPED="dropped/all_dropped_$(date -u +%Y-%m-%d).txt"
+
+          if [ ! -f "$DROPPED" ]; then
+            # Try finding any dropped file
+            DROPPED=$(ls dropped/all_dropped_*.txt 2>/dev/null | head -1)
           fi
-          echo "Loaded $(wc -l < seeds.txt) seeds"
-      
-      - name: Run EyeCX Pipeline
-        id: scan
+
+          if [ -z "$DROPPED" ] || [ ! -f "$DROPPED" ]; then
+            echo "No dropped domains file found"
+            echo "qualified=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          TOTAL=$(wc -l < "$DROPPED")
+          echo "Scoring $TOTAL dropped domains (limit: $LIMIT)..."
+
+          mkdir -p results
+          python scripts/score_dropped.py "$DROPPED" \
+            --output results/scored.csv \
+            --opr-key "${OPENPAGERANK_API_KEY}" \
+            --limit "$LIMIT" \
+            --min-score 30
+
+          if [ -f results/scored.csv ]; then
+            QUALIFIED=$(tail -n +2 results/scored.csv | wc -l)
+          else
+            QUALIFIED=0
+          fi
+          echo "qualified=$QUALIFIED" >> $GITHUB_OUTPUT
+
+      - name: Upload to D1
+        if: steps.score.outputs.qualified != '0'
+        env:
+          D1_DATABASE_ID: ${{ env.D1_DATABASE_ID }}
         run: |
-          python eyecx.py \
-            --seeds seeds.txt \
-            --output ./results \
-            --opr-key "$OPENPAGERANK_API_KEY"
-          
-          # Count results
-          DIAMONDS=$(cat results/diamonds_*.csv 2>/dev/null | wc -l || echo "0")
-          GOLDS=$(cat results/golds_*.csv 2>/dev/null | wc -l || echo "0")
-          TOTAL=$(cat results/all_qualified_*.csv 2>/dev/null | wc -l || echo "0")
-          
-          echo "diamonds=$DIAMONDS" >> $GITHUB_OUTPUT
-          echo "golds=$GOLDS" >> $GITHUB_OUTPUT
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
-      
-      - name: Upload to Cloudflare D1
-        run: |
-          # Export results to D1 via API
-          for file in results/*.csv; do
-            if [ -f "$file" ]; then
-              echo "Uploading $file to D1..."
-              # Convert CSV to SQL inserts and execute via D1 API
-              python scripts/upload_to_d1.py "$file"
-            fi
-          done
-      
+          if [ -f results/scored.csv ]; then
+            echo "Uploading scored domains to D1..."
+            python scripts/upload_to_d1.py results/scored.csv
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: scan-results-${{ github.run_number }}
-          path: |
-            results/*.csv
-            results/*.log
+          path: results/*.csv
           retention-days: 30
-      
-      - name: Notify results
+
+      - name: Report
         if: always()
         run: |
-          echo "## EyeCX Daily Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "## EyeCX Daily Scan" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 💎 Diamonds | ${{ steps.scan.outputs.diamonds }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🥇 Golds | ${{ steps.scan.outputs.golds }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Qualified | ${{ steps.scan.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
-      
-      - name: Send Discord notification
-        if: success() && env.DISCORD_WEBHOOK_URL != ''
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          curl -X POST "$DISCORD_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "embeds": [{
-                "title": "🎯 EyeCX Daily Scan Complete",
-                "color": 5763719,
-                "fields": [
-                  {"name": "💎 Diamonds", "value": "${{ steps.scan.outputs.diamonds }}", "inline": true},
-                  {"name": "🥇 Golds", "value": "${{ steps.scan.outputs.golds }}", "inline": true},
-                  {"name": "Total", "value": "${{ steps.scan.outputs.total }}", "inline": true}
-                ],
-                "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
-              }]
-            }'
-
-  # Generate subscription lists after scan
-  generate-lists:
-    needs: scan
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Generate subscription lists
-        run: |
-          # Query D1 and generate tier-specific lists
-          python scripts/generate_subscription_lists.py
-      
-      - name: Upload subscription lists
-        uses: actions/upload-artifact@v4
-        with:
-          name: subscription-lists-${{ github.run_number }}
-          path: subscription_lists/*.json
-          retention-days: 7
-
-  # Auto-purchase high-value domains (disabled by default)
-  auto-purchase:
-    needs: scan
-    if: false  # Enable when ready: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Check purchase queue
-        run: |
-          # Get diamond domains from today's scan
-          python scripts/process_purchase_queue.py \
-            --max-purchases 5 \
-            --max-price 15.00
+          echo "| Dropped domains | ${{ needs.diff-zones.outputs.total_dropped }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Qualified (score >= 30) | ${{ steps.score.outputs.qualified || '0' }} |" >> $GITHUB_STEP_SUMMARY
