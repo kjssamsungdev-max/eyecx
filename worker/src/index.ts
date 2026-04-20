@@ -186,6 +186,15 @@ export default {
       console.error('RSS curation error:', e);
     }
 
+    // Sales extraction runs after curation
+    try {
+      console.log('Sales extraction starting...');
+      const sales = await runSalesExtraction(env);
+      console.log(`Sales extraction done: ${sales.extracted} sales from ${sales.processed} articles`);
+    } catch (e) {
+      console.error('Sales extraction error:', e);
+    }
+
     // CZDS only at 1 AM (note: ICANN blocks CF Worker IPs, so this is a no-op
     // in practice — CZDS downloads happen via GitHub Actions instead)
     if (hour === 1 && env.CZDS_USERNAME && env.CZDS_PASSWORD) {
@@ -397,6 +406,36 @@ export default {
         updated++;
       }
       return json({ ok: true, updated });
+    }
+
+    // POST /api/admin/sales/extract - Run sales extraction
+    if (path === '/api/admin/sales/extract' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const result = await runSalesExtraction(env);
+      return json(result);
+    }
+
+    // GET /api/admin/sales/stats - Sales intelligence
+    if (path === '/api/admin/sales/stats' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const totals = await env.DB.prepare(
+        'SELECT COUNT(*) as total, SUM(sale_price_usd) as sum_price, AVG(sale_price_usd) as avg_price FROM market_sales'
+      ).first<{ total: number; sum_price: number; avg_price: number }>();
+      const top10 = await env.DB.prepare(
+        'SELECT domain, tld, sale_price_usd, source_name, extracted_at FROM market_sales ORDER BY sale_price_usd DESC LIMIT 10'
+      ).all();
+      const byTld = await env.DB.prepare(
+        'SELECT tld, COUNT(*) as count, AVG(sale_price_usd) as avg_price FROM market_sales GROUP BY tld ORDER BY count DESC'
+      ).all();
+      return json({
+        total_sales: totals?.total || 0,
+        sum_price: Math.round(totals?.sum_price || 0),
+        avg_price: Math.round(totals?.avg_price || 0),
+        top_10: top10.results || [],
+        by_tld: byTld.results || [],
+      });
     }
 
     // POST /api/admin/scan/trigger - Trigger daily scan via GitHub Actions
@@ -1668,6 +1707,71 @@ function extractTags(text: string): string[] {
     if (w.length > 3 && !stopwords.has(w)) freq[w] = (freq[w] || 0) + 1;
   }
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+}
+
+// ============ SALES EXTRACTION ============
+
+const SALE_SOURCES = new Set(['DNJournal', 'NamePros', 'DomainInvesting', 'DomainNameWire', 'Domain Name Wire', 'Sedo']);
+const SALE_PATTERN = /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.(?:com|net|org|io|ai|co|xyz|info|app|dev|me))\s*(?:[-–—]|sold\s+for|was\s+sold|acquired\s+for|for)\s*\$?([\d,]+(?:\.\d{2})?)/gi;
+
+function extractSalesFromText(text: string): Array<{ domain: string; price: number }> {
+  if (!text || text.length < 10) return [];
+
+  const sales: Array<{ domain: string; price: number }> = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+  const re = new RegExp(SALE_PATTERN.source, SALE_PATTERN.flags);
+
+  for (let i = 0; i < 200; i++) {
+    match = re.exec(text);
+    if (!match) break;
+    const domain = match[1].toLowerCase();
+    const price = parseFloat(match[2].replace(/,/g, ''));
+    if (price >= 50 && price <= 100_000_000 && !seen.has(domain)) {
+      seen.add(domain);
+      sales.push({ domain, price });
+    }
+  }
+  return sales;
+}
+
+async function runSalesExtraction(env: Env): Promise<{ processed: number; extracted: number; errors: number }> {
+  const sources = Array.from(SALE_SOURCES).map(s => `'${s}'`).join(',');
+  const rows = await env.DB.prepare(
+    `SELECT id, title, excerpt, url, source_name FROM curated_content
+     WHERE source_name IN (${sources}) AND extracted_at IS NULL
+     ORDER BY published_at DESC LIMIT 100`
+  ).all<{ id: number; title: string; excerpt: string; url: string; source_name: string }>();
+
+  let processed = 0, extracted = 0, errors = 0;
+
+  for (const row of (rows.results || [])) {
+    try {
+      const text = (row.title || '') + ' ' + (row.excerpt || '');
+      const sales = extractSalesFromText(text);
+
+      for (const sale of sales) {
+        const tld = '.' + sale.domain.split('.').pop();
+        try {
+          await env.DB.prepare(
+            `INSERT OR IGNORE INTO market_sales (domain, tld, sale_price_usd, source_url, source_name)
+             VALUES (?, ?, ?, ?, ?)`
+          ).bind(sale.domain, tld, sale.price, row.url, row.source_name).run();
+          extracted++;
+        } catch {}
+      }
+
+      await env.DB.prepare(
+        "UPDATE curated_content SET extracted_at = datetime('now') WHERE id = ?"
+      ).bind(row.id).run();
+      processed++;
+    } catch (e) {
+      console.error(`Sales extraction error for ID ${row.id}: ${e}`);
+      errors++;
+    }
+  }
+
+  return { processed, extracted, errors };
 }
 
 // ============ QUALITY SCORING ============

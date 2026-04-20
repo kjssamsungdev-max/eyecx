@@ -83,4 +83,25 @@ CREATE INDEX IF NOT EXISTS idx_feedback_domain ON domain_feedback(domain);
 
 -- Note: curated_content table has additional columns added via ALTER TABLE:
 -- hidden INTEGER DEFAULT 0  (added 2026-04-21)
+-- extracted_at TEXT  (added 2026-04-21)
 -- quality_score already existed in original schema
+
+-- Note: domains table has additional columns added via ALTER TABLE:
+-- score_version INTEGER DEFAULT 0  (added 2026-04-21)
+-- last_rescored_at TEXT  (added 2026-04-21)
+
+-- Market sales (extracted from curated content)
+CREATE TABLE IF NOT EXISTS market_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    tld TEXT NOT NULL,
+    sale_price_usd REAL NOT NULL,
+    sale_date TEXT,
+    source_url TEXT NOT NULL,
+    source_name TEXT,
+    extracted_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(domain, source_url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sales_tld ON market_sales(tld);
+CREATE INDEX IF NOT EXISTS idx_sales_price ON market_sales(sale_price_usd DESC);
