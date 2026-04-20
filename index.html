@@ -1111,11 +1111,13 @@
             <h2>Admin Dashboard</h2>
             <div id="admin-stats" class="stats-grid"></div>
             <div class="tab-bar" id="admin-tabs">
-                <button class="active" data-tab="admin-users">Users</button>
+                <button class="active" data-tab="admin-domains">Domains</button>
+                <button data-tab="admin-users">Users</button>
                 <button data-tab="admin-content">Articles</button>
                 <button data-tab="admin-waitlist">Waitlist</button>
             </div>
-            <div id="admin-users"></div>
+            <div id="admin-domains"></div>
+            <div id="admin-users" style="display:none;"></div>
             <div id="admin-content" style="display:none;"></div>
             <div id="admin-waitlist" style="display:none;"></div>
         </div>
@@ -1328,15 +1330,19 @@
             .map(([k, v]) => `<div class="stat-card"><div class="val">${v}</div><div class="lbl">${k}</div></div>`).join('');
 
         // Tab switching
+        const allTabs = ['admin-domains','admin-users','admin-content','admin-waitlist'];
         document.querySelectorAll('#admin-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                ['admin-users','admin-content','admin-waitlist'].forEach(id => {
+                allTabs.forEach(id => {
                     document.getElementById(id).style.display = id === btn.dataset.tab ? '' : 'none';
                 });
             };
         });
+
+        // Load domains tab
+        await loadAdminDomains();
 
         // Load users
         const usersResp = await apiFetch('/api/admin/users');
@@ -1356,6 +1362,92 @@
                 <div class="card-meta"><span>${a.category}</span><span>${a.views} views</span>
                 <span>${a.published_at?.slice(0,10)||'draft'}</span></div></div>`).join('')
             : '<p style="color:var(--muted)">No articles yet.</p>';
+    }
+
+    // ============ ADMIN DOMAINS TAB ============
+    let domainFilters = { tier: '', tld: '', min_score: '0' };
+
+    async function loadAdminDomains() {
+        const el = document.getElementById('admin-domains');
+        const params = new URLSearchParams({ limit: '100', min_score: domainFilters.min_score || '0' });
+        if (domainFilters.tier) params.set('tier', domainFilters.tier);
+        if (domainFilters.tld) params.set('tld', domainFilters.tld);
+
+        el.innerHTML = `
+            <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+                <select id="f-tier" class="form-input" style="width:auto;padding:8px 12px;">
+                    <option value="">All tiers</option>
+                    <option value="diamond">Diamond</option><option value="gold">Gold</option>
+                    <option value="silver">Silver</option><option value="bronze">Bronze</option>
+                </select>
+                <select id="f-tld" class="form-input" style="width:auto;padding:8px 12px;">
+                    <option value="">All TLDs</option>
+                    <option value=".xyz">.xyz</option><option value=".info">.info</option>
+                    <option value=".org">.org</option><option value=".com">.com</option>
+                </select>
+                <input id="f-score" class="form-input" style="width:80px;padding:8px 12px;" type="number" min="0" max="100" placeholder="Min score" value="${domainFilters.min_score}">
+                <button class="btn btn-primary" style="padding:8px 16px;" onclick="applyDomainFilters()">Filter</button>
+            </div>
+            <div id="domains-table"><p style="color:var(--muted)">Loading domains...</p></div>`;
+
+        const resp = await apiFetch(`/api/domains?${params}`);
+        const data = await resp.json();
+        const domains = data.domains || [];
+
+        if (!domains.length) {
+            document.getElementById('domains-table').innerHTML = '<p style="color:var(--muted)">No domains found. Run the daily scan pipeline to populate.</p>';
+            return;
+        }
+
+        document.getElementById('domains-table').innerHTML = `<table class="data-table">
+            <tr><th>Domain</th><th>TLD</th><th>Tier</th><th>Score</th><th>Value</th><th>Status</th><th>Actions</th></tr>
+            ${domains.map(d => `<tr id="row-${d.domain.replace(/\./g,'-')}">
+                <td><strong>${d.domain}</strong></td>
+                <td>${d.tld}</td>
+                <td><span class="tag">${d.tier}</span></td>
+                <td>${d.potential_score}</td>
+                <td>$${d.estimated_flip_value}</td>
+                <td id="status-${d.domain.replace(/\./g,'-')}">${d.availability_status || 'unknown'}</td>
+                <td style="display:flex;gap:4px;flex-wrap:wrap;">
+                    <button class="vote-btn" onclick="checkDomain('${d.domain}')">Check</button>
+                    <button class="vote-btn" onclick="feedbackDomain('${d.domain}','saved')" title="Save">+</button>
+                    <button class="vote-btn" onclick="feedbackDomain('${d.domain}','dismissed')" title="Dismiss">-</button>
+                </td>
+            </tr>`).join('')}
+        </table>`;
+    }
+
+    function applyDomainFilters() {
+        domainFilters.tier = document.getElementById('f-tier').value;
+        domainFilters.tld = document.getElementById('f-tld').value;
+        domainFilters.min_score = document.getElementById('f-score').value || '0';
+        loadAdminDomains();
+    }
+
+    async function checkDomain(domain) {
+        const el = document.getElementById('status-' + domain.replace(/\./g, '-'));
+        el.textContent = 'checking...';
+        const resp = await apiFetch('/api/check-availability', {
+            method: 'POST', body: JSON.stringify({ domain }),
+        });
+        const data = await resp.json();
+        if (data.available) {
+            const price = data.price ? `$${data.price}` : '';
+            el.innerHTML = `<span style="color:var(--success)">Available ${price}</span>
+                <a href="https://dash.cloudflare.com/?to=/:account/domains/register/${domain}" target="_blank"
+                   style="color:var(--accent);font-size:0.85rem;margin-left:8px;">Buy</a>`;
+        } else {
+            el.innerHTML = '<span style="color:#f87171">Registered</span>';
+        }
+    }
+
+    async function feedbackDomain(domain, signal) {
+        await apiFetch('/api/admin/feedback', {
+            method: 'POST', body: JSON.stringify({ domain, signal }),
+        });
+        const row = document.getElementById('row-' + domain.replace(/\./g, '-'));
+        if (signal === 'dismissed' && row) row.style.opacity = '0.4';
+        if (signal === 'saved' && row) row.style.background = 'rgba(34,211,238,0.05)';
     }
 
     // ============ COMMUNITY ============

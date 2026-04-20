@@ -332,6 +332,35 @@ export default {
       return await adminStats(env);
     }
 
+    // POST /api/admin/feedback - Record domain feedback
+    if (path === '/api/admin/feedback' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const { domain, signal, note } = await request.json() as { domain: string; signal: string; note?: string };
+      if (!domain || !signal) return error('domain and signal required');
+      if (!['saved', 'dismissed', 'bought', 'passed'].includes(signal)) return error('Invalid signal');
+      await env.DB.prepare(
+        'INSERT INTO domain_feedback (domain, signal, note, created_by) VALUES (?, ?, ?, ?)'
+      ).bind(domain, signal, note || null, user!.id).run();
+      return json({ ok: true, domain, signal });
+    }
+
+    // GET /api/admin/feedback/summary - Feedback summary
+    if (path === '/api/admin/feedback/summary' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const counts = await env.DB.prepare(
+        'SELECT signal, COUNT(*) as count FROM domain_feedback GROUP BY signal'
+      ).all();
+      const saved = await env.DB.prepare(
+        `SELECT f.domain, d.potential_score, d.tier, d.estimated_flip_value, d.availability_status
+         FROM domain_feedback f LEFT JOIN domains d ON f.domain = d.domain
+         WHERE f.signal = 'saved' AND f.domain NOT IN (SELECT domain FROM domain_feedback WHERE signal = 'bought')
+         ORDER BY f.created_at DESC LIMIT 20`
+      ).all();
+      return json({ counts: counts.results || [], saved_not_bought: saved.results || [] });
+    }
+
     // POST /api/admin/curation/run - Manual trigger RSS curation
     if (path === '/api/admin/curation/run' && request.method === 'POST') {
       const [user, err] = await requireAdmin(request, env);

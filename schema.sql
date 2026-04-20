@@ -68,3 +68,15 @@ CREATE TABLE IF NOT EXISTS purchase_queue (
 
 CREATE INDEX IF NOT EXISTS idx_purchase_status ON purchase_queue(status);
 CREATE INDEX IF NOT EXISTS idx_purchase_score ON purchase_queue(score DESC);
+
+-- Domain feedback (admin learning loop)
+CREATE TABLE IF NOT EXISTS domain_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    signal TEXT NOT NULL CHECK(signal IN ('saved','dismissed','bought','passed')),
+    note TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_domain ON domain_feedback(domain);
