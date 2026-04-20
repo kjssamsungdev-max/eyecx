@@ -80,3 +80,7 @@ CREATE TABLE IF NOT EXISTS domain_feedback (
 );
 
 CREATE INDEX IF NOT EXISTS idx_feedback_domain ON domain_feedback(domain);
+
+-- Note: curated_content table has additional columns added via ALTER TABLE:
+-- hidden INTEGER DEFAULT 0  (added 2026-04-21)
+-- quality_score already existed in original schema

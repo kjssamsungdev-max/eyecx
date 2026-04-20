@@ -1415,17 +1415,28 @@
         await loadAdminCurated();
     }
 
+    let curatedFilter = 'fresh';
+
     async function loadAdminCurated() {
         const el = document.getElementById('admin-curated');
         el.innerHTML = '<p style="color:var(--muted)">Loading curated content...</p>';
 
-        const resp = await apiFetch('/api/curated?limit=50');
+        const qp = curatedFilter === 'all' ? '?all=1&limit=50' : curatedFilter === '7d' ? '?limit=50' : '?limit=50';
+        const resp = await apiFetch(`/api/curated${qp}`);
         const data = await resp.json();
-        const items = data.articles || [];
+        let items = data.articles || [];
         const now = Date.now();
 
+        // Client-side 7d filter
+        if (curatedFilter === '7d') {
+            items = items.filter(a => {
+                const days = Math.floor((now - new Date(a.published_at).getTime()) / 86400000);
+                return days <= 7;
+            });
+        }
+
         function freshness(pubDate) {
-            if (!pubDate) return { color: '#71717a', label: 'unknown' };
+            if (!pubDate) return { color: '#71717a', label: '?' };
             const days = Math.floor((now - new Date(pubDate).getTime()) / 86400000);
             if (days <= 7) return { color: 'var(--success)', label: `${days}d` };
             if (days <= 30) return { color: 'var(--gold)', label: `${days}d` };
@@ -1433,39 +1444,56 @@
         }
 
         el.innerHTML = `
-            <div style="margin-bottom:16px;">
+            <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">
                 <button class="btn btn-primary" style="padding:8px 16px;" id="fetch-rss-btn">Fetch now</button>
-                <span id="fetch-rss-msg" style="margin-left:12px;color:var(--muted);font-size:0.9rem;"></span>
+                <select id="curated-filter" class="form-input" style="width:auto;padding:8px 12px;">
+                    <option value="fresh" ${curatedFilter==='fresh'?'selected':''}>Fresh (30 days)</option>
+                    <option value="7d" ${curatedFilter==='7d'?'selected':''}>Last 7 days</option>
+                    <option value="all" ${curatedFilter==='all'?'selected':''}>All</option>
+                </select>
+                <span id="fetch-rss-msg" style="color:var(--muted);font-size:0.9rem;"></span>
             </div>
             ${items.length ? `<table class="data-table">
-                <tr><th>Source</th><th>Title</th><th>Category</th><th>Published</th><th>Fresh</th><th>Views</th></tr>
+                <tr><th>Source</th><th>Title</th><th>Cat</th><th>Published</th><th>Fresh</th><th>Score</th><th>Views</th><th></th></tr>
                 ${items.map(a => {
                     const f = freshness(a.published_at);
-                    return `<tr>
+                    return `<tr id="cur-row-${a.id}">
                         <td>${a.source_name}</td>
-                        <td><a href="${a.url}" target="_blank" style="color:var(--accent);">${a.title?.slice(0,60)}${a.title?.length>60?'...':''}</a></td>
+                        <td><a href="${a.url}" target="_blank" style="color:var(--accent);">${a.title?.slice(0,55)}${a.title?.length>55?'...':''}</a></td>
                         <td>${a.category}</td>
                         <td>${a.published_at?.slice(0,10)||''}</td>
                         <td><span style="color:${f.color};font-weight:600;">${f.label}</span></td>
+                        <td>${a.quality_score||0}</td>
                         <td>${a.views}</td>
+                        <td><button class="vote-btn" onclick="hideCurated(${a.id})">Hide</button></td>
                     </tr>`;
                 }).join('')}
-            </table>` : '<p style="color:var(--muted)">No curated content yet.</p>'}`;
+            </table>` : '<p style="color:var(--muted)">No curated content matches filter.</p>'}`;
+
+        document.getElementById('curated-filter').onchange = (e) => {
+            curatedFilter = e.target.value;
+            loadAdminCurated();
+        };
 
         document.getElementById('fetch-rss-btn').onclick = async () => {
             const msg = document.getElementById('fetch-rss-msg');
             const btn = document.getElementById('fetch-rss-btn');
-            btn.disabled = true;
-            msg.textContent = 'Fetching feeds...';
+            btn.disabled = true; msg.textContent = 'Fetching feeds...';
             try {
                 const r = await apiFetch('/api/admin/curation/run', { method: 'POST' });
                 const d = await r.json();
-                msg.textContent = `Done: ${d.inserted} new articles from ${d.fetched}/${d.sources} sources (${d.errors} errors)`;
+                msg.textContent = `Done: ${d.inserted} new from ${d.fetched}/${d.sources} sources`;
                 msg.style.color = 'var(--success)';
                 setTimeout(() => loadAdminCurated(), 1500);
             } catch { msg.textContent = 'Failed'; msg.style.color = '#f87171'; }
             btn.disabled = false;
         };
+    }
+
+    async function hideCurated(id) {
+        await apiFetch(`/api/admin/curated/${id}/hide`, { method: 'POST' });
+        const row = document.getElementById('cur-row-' + id);
+        if (row) row.remove();
     }
 
     // ============ ADMIN DOMAINS TAB ============

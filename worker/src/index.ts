@@ -374,6 +374,31 @@ export default {
       return json(result);
     }
 
+    // POST /api/admin/curated/:id/hide - Hide a curated item
+    if (path.match(/^\/api\/admin\/curated\/\d+\/hide$/) && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[4]);
+      await env.DB.prepare('UPDATE curated_content SET hidden = 1 WHERE id = ?').bind(id).run();
+      return json({ ok: true, id, hidden: true });
+    }
+
+    // POST /api/admin/curated/rescore - Rescore all curated content
+    if (path === '/api/admin/curated/rescore' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const rows = await env.DB.prepare(
+        'SELECT id, title, excerpt, published_at, category, source_name FROM curated_content'
+      ).all<{ id: number; title: string; excerpt: string; published_at: string; category: string; source_name: string }>();
+      let updated = 0;
+      for (const row of (rows.results || [])) {
+        const qs = computeQualityScore(row.title, row.excerpt, row.published_at, row.category, row.source_name);
+        await env.DB.prepare('UPDATE curated_content SET quality_score = ? WHERE id = ?').bind(qs, row.id).run();
+        updated++;
+      }
+      return json({ ok: true, updated });
+    }
+
     // POST /api/admin/scan/trigger - Trigger daily scan via GitHub Actions
     if (path === '/api/admin/scan/trigger' && request.method === 'POST') {
       const [user, err] = await requireAdmin(request, env);
@@ -1154,13 +1179,19 @@ async function updateArticle(slug: string, request: Request, env: Env): Promise<
 // ============ CURATED CONTENT ============
 
 async function listCurated(url: URL, env: Env): Promise<Response> {
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 50);
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '30'), 50);
   const offset = parseInt(url.searchParams.get('offset') || '0');
+  const all = url.searchParams.get('all') === '1';
+
+  let where = "status = 'published' AND hidden = 0";
+  if (!all) {
+    where += " AND published_at > datetime('now', '-30 days')";
+  }
 
   const result = await env.DB.prepare(
     `SELECT id, source_name, title, url, excerpt, author, published_at, category, tags,
-     views, featured FROM curated_content WHERE status = 'published' AND archived = 0
-     ORDER BY published_at DESC LIMIT ? OFFSET ?`
+     quality_score, views, featured FROM curated_content WHERE ${where}
+     ORDER BY quality_score DESC, published_at DESC LIMIT ? OFFSET ?`
   ).bind(limit, offset).all();
 
   return json({ articles: result.results || [], count: result.results?.length || 0 });
@@ -1564,14 +1595,17 @@ async function fetchAndCurateFeed(source: CurationSource, env: Env): Promise<num
     const excerpt = (item.description || '').slice(0, 500);
     const tags = extractTags(item.title + ' ' + excerpt);
 
+    const pubDate = item.pubDate || new Date().toISOString();
+    const qScore = computeQualityScore(item.title, excerpt, pubDate, source.category, source.name);
+
     await env.DB.prepare(
       `INSERT INTO curated_content (source_id, source_name, title, url, excerpt, author,
        published_at, category, tags, slug, quality_score, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')`
     ).bind(
       source.id, source.name, item.title, item.url, excerpt,
-      item.author || '', item.pubDate || new Date().toISOString(),
-      source.category, JSON.stringify(tags), slug, 50
+      item.author || '', pubDate,
+      source.category, JSON.stringify(tags), slug, qScore
     ).run();
     inserted++;
   }
@@ -1634,6 +1668,23 @@ function extractTags(text: string): string[] {
     if (w.length > 3 && !stopwords.has(w)) freq[w] = (freq[w] || 0) + 1;
   }
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+}
+
+// ============ QUALITY SCORING ============
+
+const DOMAIN_KEYWORDS = /sold|sale|acquisition|acquired|\$|million|valuation|price|flip|aftermarket/i;
+const TOP_SOURCES = new Set(['DNJournal', 'DomainNameWire', 'NamePros', 'DomainInvesting', 'ICANN']);
+const NEWS_CATEGORIES = new Set(['Domain News', 'Market Analysis', 'Sales']);
+
+function computeQualityScore(title: string, excerpt: string, publishedAt: string, category: string, sourceName: string): number {
+  let score = 0;
+  const daysSince = Math.floor((Date.now() - new Date(publishedAt).getTime()) / 86400000);
+  if (daysSince <= 14) score += 20;
+  if (DOMAIN_KEYWORDS.test(title)) score += 15;
+  if (excerpt.length > 200) score += 10;
+  if (NEWS_CATEGORIES.has(category)) score += 10;
+  if (TOP_SOURCES.has(sourceName)) score += 5;
+  return Math.min(score, 100);
 }
 
 // ============ CZDS HELPERS ============
