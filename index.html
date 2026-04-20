@@ -699,6 +699,58 @@
             .waitlist-form { flex-direction: column; }
             .waitlist-input, .waitlist-form .btn { width: 100%; }
         }
+        /* App views */
+        .app-view { display: none; padding: 60px 0; min-height: 70vh; }
+        .app-view.active { display: block; }
+        .app-view h2 { font-size: 2rem; margin-bottom: 24px; }
+        .app-view h3 { font-size: 1.3rem; margin-bottom: 16px; color: var(--text); }
+
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; color: var(--muted); margin-bottom: 6px; font-size: 0.9rem; }
+        .form-input {
+            width: 100%; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text); font-size: 1rem; outline: none;
+        }
+        .form-input:focus { border-color: var(--accent); }
+        .form-msg { margin-top: 12px; font-size: 0.9rem; }
+        .form-msg.error { color: #f87171; }
+        .form-msg.success { color: var(--success); }
+
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 16px; }
+        .card:hover { border-color: var(--accent-dim); }
+        .card-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+        .card-title a { color: var(--text); text-decoration: none; }
+        .card-title a:hover { color: var(--accent); }
+        .card-meta { color: var(--muted); font-size: 0.85rem; display: flex; gap: 16px; flex-wrap: wrap; }
+        .card-body { margin-top: 12px; color: var(--text); line-height: 1.7; }
+        .card-body p { margin-bottom: 12px; }
+        .card-body h1,.card-body h2,.card-body h3 { margin: 20px 0 10px; }
+        .card-body code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+        .card-body pre { background: var(--bg); padding: 16px; border-radius: 8px; overflow-x: auto; margin: 12px 0; }
+        .card-body a { color: var(--accent); }
+
+        .tag { display: inline-block; padding: 3px 10px; background: rgba(34,211,238,0.1); color: var(--accent); border-radius: 4px; font-size: 0.8rem; margin: 2px 4px 2px 0; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 32px; }
+        .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; }
+        .stat-card .val { font-size: 2rem; font-weight: 700; color: var(--accent); }
+        .stat-card .lbl { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th, .data-table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+        .data-table th { color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .data-table td { font-size: 0.95rem; }
+
+        .tab-bar { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+        .tab-bar button { background: none; border: none; color: var(--muted); padding: 10px 20px; cursor: pointer; font-size: 0.95rem; border-bottom: 2px solid transparent; }
+        .tab-bar button.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab-bar button:hover { color: var(--text); }
+
+        .vote-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+        .vote-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        .back-link { color: var(--accent); text-decoration: none; font-size: 0.9rem; display: inline-block; margin-bottom: 16px; }
+        .back-link:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -717,13 +769,17 @@
             </a>
             <nav>
                 <ul class="nav-links">
-                    <li><a href="#portfolio">Portfolio</a></li>
-                    <li><a href="#features">How It Works</a></li>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/community">Community</a></li>
+                    <li><a href="/blog">Blog</a></li>
                     <li><a href="#pricing">Pricing</a></li>
-                    <li><a href="#waitlist">Waitlist</a></li>
                 </ul>
             </nav>
-            <a href="https://github.com/kjssamsungdev-max/eyecx" class="btn btn-outline">GitHub</a>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <span id="nav-user" style="color:var(--muted);font-size:0.9rem;display:none;"></span>
+                <a href="/admin" id="nav-admin" class="btn btn-outline" style="display:none;font-size:0.85rem;padding:6px 14px;">Admin</a>
+                <a href="/login" id="nav-login" class="btn btn-outline" style="font-size:0.85rem;padding:6px 14px;">Login</a>
+            </div>
         </div>
     </header>
 
@@ -1003,6 +1059,112 @@
         </section>
     </main>
 
+    <!-- App views (hidden by default, shown by router) -->
+    <div id="view-login" class="app-view">
+        <div class="container" style="max-width:400px;">
+            <h2>Log in to EyeCX</h2>
+            <form id="login-form">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" name="password" class="form-input" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;">Log In</button>
+                <div id="login-msg" class="form-msg"></div>
+            </form>
+            <p style="color:var(--muted);margin-top:16px;font-size:0.9rem;">
+                Don't have an account? <a href="/register" style="color:var(--accent);">Register</a>
+            </p>
+        </div>
+    </div>
+
+    <div id="view-register" class="app-view">
+        <div class="container" style="max-width:400px;">
+            <h2>Create Account</h2>
+            <form id="register-form">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" name="username" class="form-input" minlength="3" maxlength="30" required>
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label>Password (8+ chars)</label>
+                    <input type="password" name="password" class="form-input" minlength="8" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;">Register</button>
+                <div id="register-msg" class="form-msg"></div>
+            </form>
+            <p style="color:var(--muted);margin-top:16px;font-size:0.9rem;">
+                Already have an account? <a href="/login" style="color:var(--accent);">Log in</a>
+            </p>
+        </div>
+    </div>
+
+    <div id="view-admin" class="app-view">
+        <div class="container">
+            <h2>Admin Dashboard</h2>
+            <div id="admin-stats" class="stats-grid"></div>
+            <div class="tab-bar" id="admin-tabs">
+                <button class="active" data-tab="admin-users">Users</button>
+                <button data-tab="admin-content">Articles</button>
+                <button data-tab="admin-waitlist">Waitlist</button>
+            </div>
+            <div id="admin-users"></div>
+            <div id="admin-content" style="display:none;"></div>
+            <div id="admin-waitlist" style="display:none;"></div>
+        </div>
+    </div>
+
+    <div id="view-community" class="app-view">
+        <div class="container">
+            <div id="community-list">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;">
+                    <h2>Community</h2>
+                    <button id="new-thread-btn" class="btn btn-primary" style="display:none;">New Thread</button>
+                </div>
+                <div id="thread-list"></div>
+            </div>
+            <div id="community-thread" style="display:none;"></div>
+            <div id="community-new" style="display:none;">
+                <a href="/community" class="back-link">&larr; Back to threads</a>
+                <h2>New Thread</h2>
+                <form id="new-thread-form">
+                    <div class="form-group"><label>Title</label><input type="text" name="title" class="form-input" required></div>
+                    <div class="form-group"><label>Category</label>
+                        <select name="category" class="form-input">
+                            <option>General Discussion</option><option>Strategy & Tips</option>
+                            <option>Niche Talk</option><option>Show & Tell</option><option>Feature Requests</option>
+                        </select>
+                    </div>
+                    <div class="form-group"><label>Body</label><textarea name="body" class="form-input" rows="6" required></textarea></div>
+                    <button type="submit" class="btn btn-primary">Post Thread</button>
+                    <div id="thread-msg" class="form-msg"></div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-blog" class="app-view">
+        <div class="container">
+            <div id="blog-list">
+                <h2>Blog</h2>
+                <div class="tab-bar" id="blog-tabs">
+                    <button class="active" data-tab="blog-articles">Articles</button>
+                    <button data-tab="blog-curated">Curated</button>
+                </div>
+                <div id="blog-articles"></div>
+                <div id="blog-curated" style="display:none;"></div>
+            </div>
+            <div id="blog-article" style="display:none;"></div>
+        </div>
+    </div>
+
     <footer>
         <div class="container">
             <p>© 2026 EyeCX · <a href="https://github.com/kjssamsungdev-max/eyecx">GitHub</a> · <a href="mailto:hello@eyecx.com">Contact</a> · Built by <a href="https://kjs.productions">KJS</a></p>
@@ -1010,51 +1172,403 @@
     </footer>
     
     <script>
-        // Countdown to Day 60 (June 15, 2026)
-        const launchDate = new Date('2026-06-15T00:00:00');
-        
-        function updateCountdown() {
-            const now = new Date();
-            const diff = launchDate - now;
-            
-            if (diff <= 0) {
-                document.getElementById('countdown').innerHTML = '<div style="color: var(--success); font-size: 1.5rem; font-weight: 600;">🎉 Now Live!</div>';
-                return;
-            }
-            
-            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            
-            document.getElementById('days').textContent = days;
-            document.getElementById('hours').textContent = hours;
-            document.getElementById('mins').textContent = mins;
+    const API = 'https://eyecx-api.kjssamsungdev.workers.dev';
+
+    // ============ AUTH STATE ============
+    function getToken() { return localStorage.getItem('eyecx_token'); }
+    function setToken(t) { localStorage.setItem('eyecx_token', t); }
+    function clearToken() { localStorage.removeItem('eyecx_token'); localStorage.removeItem('eyecx_user'); }
+    function getUser() { try { return JSON.parse(localStorage.getItem('eyecx_user')); } catch { return null; } }
+    function setUser(u) { localStorage.setItem('eyecx_user', JSON.stringify(u)); }
+
+    async function apiFetch(path, opts = {}) {
+        const token = getToken();
+        const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const resp = await fetch(`${API}${path}`, { ...opts, headers });
+        return resp;
+    }
+
+    async function checkAuth() {
+        const token = getToken();
+        if (!token) { updateNav(null); return null; }
+        try {
+            const resp = await apiFetch('/api/auth/me');
+            if (!resp.ok) { clearToken(); updateNav(null); return null; }
+            const data = await resp.json();
+            setUser(data.user);
+            updateNav(data.user);
+            return data.user;
+        } catch { clearToken(); updateNav(null); return null; }
+    }
+
+    function updateNav(user) {
+        const navUser = document.getElementById('nav-user');
+        const navAdmin = document.getElementById('nav-admin');
+        const navLogin = document.getElementById('nav-login');
+        if (user) {
+            navUser.textContent = user.username;
+            navUser.style.display = 'inline';
+            navLogin.textContent = 'Logout';
+            navLogin.href = '#';
+            navLogin.onclick = (e) => { e.preventDefault(); clearToken(); navigate('/'); };
+            if (user.role === 'admin') navAdmin.style.display = 'inline';
+        } else {
+            navUser.style.display = 'none';
+            navAdmin.style.display = 'none';
+            navLogin.textContent = 'Login';
+            navLogin.href = '/login';
+            navLogin.onclick = null;
         }
-        
-        updateCountdown();
-        setInterval(updateCountdown, 60000);
-        
-        // Waitlist form handler
-        document.getElementById('waitlist-form').addEventListener('submit', async (e) => {
+    }
+
+    // ============ ROUTER ============
+    const routes = ['/', '/login', '/register', '/admin', '/community', '/blog'];
+
+    function navigate(path) {
+        history.pushState(null, '', path);
+        route();
+    }
+
+    function route() {
+        const path = location.pathname;
+        const landing = document.querySelector('main');
+        const footer = document.querySelector('footer');
+
+        // Hide all app views
+        document.querySelectorAll('.app-view').forEach(v => v.classList.remove('active'));
+
+        if (path === '/' || path === '') {
+            landing.style.display = '';
+            footer.style.display = '';
+            return;
+        }
+
+        // Hide landing for app views
+        landing.style.display = 'none';
+        footer.style.display = 'none';
+
+        if (path === '/login') {
+            document.getElementById('view-login').classList.add('active');
+        } else if (path === '/register') {
+            document.getElementById('view-register').classList.add('active');
+        } else if (path === '/admin') {
+            loadAdmin();
+        } else if (path === '/community' || path.startsWith('/community/')) {
+            loadCommunity(path);
+        } else if (path === '/blog' || path.startsWith('/blog/')) {
+            loadBlog(path);
+        } else {
+            landing.style.display = '';
+            footer.style.display = '';
+        }
+    }
+
+    // Intercept link clicks for SPA navigation
+    document.addEventListener('click', (e) => {
+        const a = e.target.closest('a');
+        if (!a) return;
+        const href = a.getAttribute('href');
+        if (!href || href.startsWith('http') || href.startsWith('#') || href.startsWith('mailto:')) return;
+        if (routes.some(r => href === r || href.startsWith('/community/') || href.startsWith('/blog/'))) {
+            e.preventDefault();
+            navigate(href);
+        }
+    });
+    window.addEventListener('popstate', route);
+
+    // ============ LOGIN ============
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById('login-msg');
+        const fd = new FormData(e.target);
+        msg.textContent = '';
+        try {
+            const resp = await fetch(`${API}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: fd.get('email'), password: fd.get('password') }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) { msg.textContent = data.error || 'Login failed'; msg.className = 'form-msg error'; return; }
+            setToken(data.token);
+            setUser(data.user);
+            navigate(data.user.role === 'admin' ? '/admin' : '/community');
+        } catch { msg.textContent = 'Network error'; msg.className = 'form-msg error'; }
+    });
+
+    // ============ REGISTER ============
+    document.getElementById('register-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById('register-msg');
+        const fd = new FormData(e.target);
+        msg.textContent = '';
+        try {
+            const resp = await fetch(`${API}/api/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: fd.get('username'), email: fd.get('email'), password: fd.get('password') }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) { msg.textContent = data.error || 'Registration failed'; msg.className = 'form-msg error'; return; }
+            msg.textContent = 'Account created! Check your email to verify, then log in.';
+            msg.className = 'form-msg success';
+        } catch { msg.textContent = 'Network error'; msg.className = 'form-msg error'; }
+    });
+
+    // ============ ADMIN ============
+    async function loadAdmin() {
+        const user = await checkAuth();
+        if (!user || user.role !== 'admin') { navigate('/login'); return; }
+        document.getElementById('view-admin').classList.add('active');
+
+        const statsResp = await apiFetch('/api/admin/stats');
+        const stats = await statsResp.json();
+        document.getElementById('admin-stats').innerHTML = Object.entries(stats)
+            .map(([k, v]) => `<div class="stat-card"><div class="val">${v}</div><div class="lbl">${k}</div></div>`).join('');
+
+        // Tab switching
+        document.querySelectorAll('#admin-tabs button').forEach(btn => {
+            btn.onclick = () => {
+                document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                ['admin-users','admin-content','admin-waitlist'].forEach(id => {
+                    document.getElementById(id).style.display = id === btn.dataset.tab ? '' : 'none';
+                });
+            };
+        });
+
+        // Load users
+        const usersResp = await apiFetch('/api/admin/users');
+        const usersData = await usersResp.json();
+        document.getElementById('admin-users').innerHTML = `<table class="data-table">
+            <tr><th>Username</th><th>Email</th><th>Role</th><th>Tier</th><th>Verified</th><th>Joined</th></tr>
+            ${(usersData.users||[]).map(u => `<tr><td>${u.username}</td><td>${u.email}</td>
+            <td>${u.role}</td><td>${u.tier}</td><td>${u.email_verified?'Yes':'No'}</td>
+            <td>${u.created_at?.slice(0,10)||''}</td></tr>`).join('')}
+        </table>`;
+
+        // Load articles
+        const artResp = await apiFetch('/api/articles');
+        const artData = await artResp.json();
+        document.getElementById('admin-content').innerHTML = (artData.articles||[]).length
+            ? (artData.articles||[]).map(a => `<div class="card"><div class="card-title">${a.title}</div>
+                <div class="card-meta"><span>${a.category}</span><span>${a.views} views</span>
+                <span>${a.published_at?.slice(0,10)||'draft'}</span></div></div>`).join('')
+            : '<p style="color:var(--muted)">No articles yet.</p>';
+    }
+
+    // ============ COMMUNITY ============
+    async function loadCommunity(path) {
+        document.getElementById('view-community').classList.add('active');
+        const user = getUser();
+        const newBtn = document.getElementById('new-thread-btn');
+        if (user) {
+            newBtn.style.display = '';
+            newBtn.onclick = () => {
+                document.getElementById('community-list').style.display = 'none';
+                document.getElementById('community-new').style.display = '';
+            };
+        }
+
+        const match = path.match(/^\/community\/(\d+)$/);
+        if (match) {
+            await loadThread(parseInt(match[1]));
+            return;
+        }
+
+        // Thread list
+        document.getElementById('community-list').style.display = '';
+        document.getElementById('community-thread').style.display = 'none';
+        document.getElementById('community-new').style.display = 'none';
+
+        const resp = await fetch(`${API}/api/threads`);
+        const data = await resp.json();
+        document.getElementById('thread-list').innerHTML = (data.threads||[]).length
+            ? (data.threads||[]).map(t => `<div class="card">
+                <div class="card-title"><a href="/community/${t.id}">${t.title}</a></div>
+                <div class="card-meta">
+                    <span>${t.username||'anon'}</span><span>${t.category}</span>
+                    <span>${t.reply_count} replies</span><span>${t.views} views</span>
+                    <span>${t.created_at?.slice(0,10)||''}</span>
+                </div></div>`).join('')
+            : '<p style="color:var(--muted)">No threads yet. Be the first to post!</p>';
+    }
+
+    async function loadThread(id) {
+        document.getElementById('community-list').style.display = 'none';
+        document.getElementById('community-new').style.display = 'none';
+        const el = document.getElementById('community-thread');
+        el.style.display = '';
+        el.innerHTML = '<p style="color:var(--muted)">Loading...</p>';
+
+        const [threadResp, commentsResp] = await Promise.all([
+            fetch(`${API}/api/threads/${id}`),
+            fetch(`${API}/api/threads/${id}/comments`),
+        ]);
+        const thread = await threadResp.json();
+        const commentsData = await commentsResp.json();
+        const user = getUser();
+
+        el.innerHTML = `
+            <a href="/community" class="back-link">&larr; Back to threads</a>
+            <div class="card">
+                <div class="card-title">${thread.title}</div>
+                <div class="card-meta"><span>${thread.username||'anon'}</span><span>${thread.category}</span>
+                <span>${thread.views} views</span><span>${thread.created_at?.slice(0,10)||''}</span></div>
+                <div class="card-body"><p>${thread.body}</p></div>
+            </div>
+            <h3 style="margin:24px 0 16px;">Replies (${commentsData.count||0})</h3>
+            ${(commentsData.comments||[]).map(c => `<div class="card" style="margin-left:24px;">
+                <div class="card-meta"><span>${c.username||'anon'}</span><span>${c.created_at?.slice(0,10)||''}</span></div>
+                <div class="card-body"><p>${c.body}</p></div>
+            </div>`).join('')}
+            ${user ? `<div style="margin-top:24px;">
+                <h3>Reply</h3>
+                <form id="reply-form">
+                    <div class="form-group"><textarea name="body" class="form-input" rows="3" placeholder="Write a reply..." required></textarea></div>
+                    <button type="submit" class="btn btn-primary">Post Reply</button>
+                </form>
+            </div>` : '<p style="color:var(--muted);margin-top:16px;"><a href="/login" style="color:var(--accent);">Log in</a> to reply.</p>'}`;
+
+        if (user) {
+            document.getElementById('reply-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const body = new FormData(e.target).get('body');
+                await apiFetch(`/api/threads/${id}/comments`, {
+                    method: 'POST', body: JSON.stringify({ body }),
+                });
+                loadThread(id);
+            });
+        }
+    }
+
+    // New thread form
+    document.getElementById('new-thread-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const msg = document.getElementById('thread-msg');
+        const resp = await apiFetch('/api/threads', {
+            method: 'POST',
+            body: JSON.stringify({ title: fd.get('title'), body: fd.get('body'), category: fd.get('category') }),
+        });
+        if (resp.ok) { navigate('/community'); }
+        else { const d = await resp.json(); msg.textContent = d.error || 'Failed'; msg.className = 'form-msg error'; }
+    });
+
+    // ============ BLOG ============
+    async function loadBlog(path) {
+        document.getElementById('view-blog').classList.add('active');
+
+        const match = path.match(/^\/blog\/(.+)$/);
+        if (match) {
+            await loadArticle(match[1]);
+            return;
+        }
+
+        document.getElementById('blog-list').style.display = '';
+        document.getElementById('blog-article').style.display = 'none';
+
+        // Tab switching
+        document.querySelectorAll('#blog-tabs button').forEach(btn => {
+            btn.onclick = () => {
+                document.querySelectorAll('#blog-tabs button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                ['blog-articles','blog-curated'].forEach(id => {
+                    document.getElementById(id).style.display = id === btn.dataset.tab ? '' : 'none';
+                });
+            };
+        });
+
+        const [artResp, curResp] = await Promise.all([
+            fetch(`${API}/api/articles`),
+            fetch(`${API}/api/curated?limit=20`),
+        ]);
+        const artData = await artResp.json();
+        const curData = await curResp.json();
+
+        document.getElementById('blog-articles').innerHTML = (artData.articles||[]).length
+            ? (artData.articles||[]).map(a => `<div class="card">
+                <div class="card-title"><a href="/blog/${a.slug}">${a.title}</a></div>
+                <div class="card-meta"><span>${a.category}</span><span>${a.read_time} min read</span>
+                <span>${a.views} views</span><span>${a.published_at?.slice(0,10)||''}</span></div>
+                ${a.excerpt ? `<p style="color:var(--muted);margin-top:8px;">${a.excerpt}</p>` : ''}
+            </div>`).join('')
+            : '<p style="color:var(--muted)">No articles yet.</p>';
+
+        document.getElementById('blog-curated').innerHTML = (curData.articles||[]).map(a => `<div class="card">
+            <div class="card-title"><a href="${a.url}" target="_blank">${a.title}</a></div>
+            <div class="card-meta"><span>${a.source_name}</span><span>${a.category}</span>
+            <span>${a.published_at?.slice(0,10)||''}</span></div>
+            ${a.excerpt ? `<p style="color:var(--muted);margin-top:8px;font-size:0.9rem;">${a.excerpt.slice(0,200)}...</p>` : ''}
+        </div>`).join('');
+    }
+
+    async function loadArticle(slug) {
+        document.getElementById('blog-list').style.display = 'none';
+        const el = document.getElementById('blog-article');
+        el.style.display = '';
+        el.innerHTML = '<p style="color:var(--muted)">Loading...</p>';
+
+        const resp = await fetch(`${API}/api/articles/${slug}`);
+        if (!resp.ok) { el.innerHTML = '<p>Article not found.</p>'; return; }
+        const a = await resp.json();
+
+        // Simple markdown-ish rendering (headers, bold, code, links, paragraphs)
+        const rendered = a.body_md
+            .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+            .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+            .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+            .replace(/\n\n/g, '</p><p>')
+            .replace(/\n/g, '<br>');
+
+        el.innerHTML = `
+            <a href="/blog" class="back-link">&larr; Back to blog</a>
+            <h2>${a.title}</h2>
+            <div class="card-meta" style="margin-bottom:24px;">
+                <span>${a.category}</span><span>${a.read_time} min read</span>
+                <span>${a.views} views</span><span>${a.published_at?.slice(0,10)||''}</span>
+            </div>
+            <div class="card-body"><p>${rendered}</p></div>`;
+    }
+
+    // ============ COUNTDOWN + WAITLIST ============
+    function updateCountdown() {
+        const diff = new Date('2026-06-15T00:00:00') - new Date();
+        if (diff <= 0) {
+            document.getElementById('countdown').innerHTML = '<div style="color:var(--success);font-size:1.5rem;font-weight:600;">Now Live!</div>';
+            return;
+        }
+        document.getElementById('days').textContent = Math.floor(diff / 86400000);
+        document.getElementById('hours').textContent = Math.floor((diff % 86400000) / 3600000);
+        document.getElementById('mins').textContent = Math.floor((diff % 3600000) / 60000);
+    }
+
+    const wf = document.getElementById('waitlist-form');
+    if (wf) {
+        wf.addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = e.target.querySelector('input[name="email"]').value;
             const msg = document.getElementById('waitlist-msg');
             try {
-                const resp = await fetch('https://eyecx-api.kjssamsungdev.workers.dev/api/waitlist', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email })
+                const resp = await fetch(`${API}/api/waitlist`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email }),
                 });
-                if (resp.ok) {
-                    msg.textContent = 'You\'re on the list. We\'ll notify you when subscriptions open.';
-                    e.target.reset();
-                } else {
-                    msg.textContent = 'Something went wrong. Try again.';
-                }
-            } catch {
-                msg.textContent = 'Network error. Try again.';
-            }
+                msg.textContent = resp.ok ? "You're on the list." : 'Something went wrong.';
+                if (resp.ok) e.target.reset();
+            } catch { msg.textContent = 'Network error.'; }
         });
+    }
+
+    // ============ INIT ============
+    updateCountdown();
+    setInterval(updateCountdown, 60000);
+    checkAuth();
+    route();
     </script>
 </body>
 </html>
