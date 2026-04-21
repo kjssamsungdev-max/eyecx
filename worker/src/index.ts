@@ -212,6 +212,17 @@ export default {
       }
     }
 
+    // Self-tuning at 5 AM UTC (after rescore at 4 AM)
+    if (hour === 5) {
+      try {
+        console.log('Self-tuning starting...');
+        const result = await runSelfTuning(env);
+        console.log(`Self-tuning done: ${result.tlds_processed} TLDs, ${result.changes} weight changes, ${result.tlds_skipped} skipped (insufficient data)`);
+      } catch (e) {
+        console.error('Self-tuning error:', e);
+      }
+    }
+
     // CZDS only at 1 AM (note: ICANN blocks CF Worker IPs, so this is a no-op
     // in practice — CZDS downloads happen via GitHub Actions instead)
     if (hour === 1 && env.CZDS_USERNAME && env.CZDS_PASSWORD) {
