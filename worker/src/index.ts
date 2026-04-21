@@ -845,6 +845,14 @@ async function checkAvailability(domain: string, env: Env): Promise<Response> {
 
     const data = await response.json() as any;
 
+    if (!response.ok) {
+      return json({
+        domain,
+        error: data.errors?.[0]?.message || `CF API ${response.status}`,
+        cf_errors: data.errors,
+      }, response.status);
+    }
+
     const result = {
       domain,
       available: data.result?.available || false,
@@ -853,20 +861,20 @@ async function checkAvailability(domain: string, env: Env): Promise<Response> {
       checked_at: new Date().toISOString(),
     };
 
-    // Update database
+    // Update database (if domain exists)
     await env.DB.prepare(`
-      UPDATE domains 
+      UPDATE domains
       SET availability_status = ?, registration_price = ?
       WHERE domain = ?
     `).bind(
       result.available ? 'available' : 'registered',
-      result.price,
+      result.price || null,
       domain
     ).run();
 
     return json(result);
   } catch (e) {
-    return error('Failed to check availability');
+    return error(`Failed to check availability: ${e}`);
   }
 }
 
