@@ -507,29 +507,40 @@ export default {
       const [user, err] = await requireAdmin(request, env);
       if (err) return err;
       if (!env.GITHUB_TOKEN) {
-        return error('GITHUB_TOKEN not configured. Run: npx wrangler secret put GITHUB_TOKEN', 400);
+        return json({ ok: false, error: 'GITHUB_TOKEN not configured', github_status: 0, github_body: '' }, 400);
       }
       try {
-        const resp = await fetch(
-          'https://api.github.com/repos/kjssamsungdev-max/eyecx/actions/workflows/daily-scan.yml/dispatches',
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
-              'Accept': 'application/vnd.github.v3+json',
-              'User-Agent': 'EyeCX-Worker',
-            },
-            body: JSON.stringify({ ref: 'main' }),
-          }
-        );
+        const ghUrl = 'https://api.github.com/repos/kjssamsungdev-max/eyecx/actions/workflows/daily-scan.yml/dispatches';
+        const resp = await fetch(ghUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'EyeCX-Worker',
+          },
+          body: JSON.stringify({ ref: 'main' }),
+        });
         if (resp.status === 204) {
-          return json({ ok: true, triggered_at: new Date().toISOString() });
+          return json({ ok: true, triggered_at: new Date().toISOString(), github_status: 204 });
         }
         const body = await resp.text();
-        return json({ ok: false, error: `GitHub API ${resp.status}: ${body.slice(0, 200)}` }, resp.status);
+        return json({ ok: false, error: 'GitHub API rejected request', github_status: resp.status, github_body: body.slice(0, 500) });
       } catch (e) {
-        return error(`Failed to trigger scan: ${e}`, 500);
+        return json({ ok: false, error: `Network error: ${e}`, github_status: 0, github_body: '' }, 500);
       }
+    }
+
+    // GET /api/admin/scan/diagnose - Diagnostic info for scan trigger
+    if (path === '/api/admin/scan/diagnose' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      return json({
+        github_token_set: !!env.GITHUB_TOKEN,
+        workflow_file: 'daily-scan.yml',
+        repo: 'kjssamsungdev-max/eyecx',
+        cloudflare_api_token_set: !!env.CLOUDFLARE_API_TOKEN,
+        account_id_set: !!env.CLOUDFLARE_ACCOUNT_ID,
+      });
     }
 
     // POST /api/check-availability (session auth — for marketplace users)

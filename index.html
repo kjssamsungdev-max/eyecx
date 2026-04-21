@@ -1629,6 +1629,7 @@
                 <span style="color:var(--muted);font-size:0.9rem;" id="scan-info">${scanInfo}</span>
                 <div style="display:flex;gap:8px;">
                     <button class="btn btn-primary" style="padding:8px 16px;" id="run-scan-btn">Run scan now</button>
+                    <button class="vote-btn" id="scan-diagnose-btn">Diagnose</button>
                     <button class="vote-btn" id="scan-history-btn">Scan history</button>
                 </div>
             </div>
@@ -1684,15 +1685,23 @@
                 const r = await apiFetch('/api/admin/scan/trigger', { method: 'POST' });
                 const d = await r.json();
                 if (d.ok) {
-                    info.textContent = 'Scan triggered! Opening Actions...';
-                    info.style.color = 'var(--success)';
+                    info.innerHTML = `<span style="color:var(--success)">Scan triggered (HTTP ${d.github_status})</span>`;
                     window.open('https://github.com/kjssamsungdev-max/eyecx/actions/workflows/daily-scan.yml', '_blank');
                 } else {
-                    info.textContent = d.error || 'Failed to trigger';
-                    info.style.color = '#f87171';
+                    info.innerHTML = `<span style="color:#f87171">${d.error} (HTTP ${d.github_status})</span>`;
+                    if (d.github_body) info.innerHTML += `<br><code style="font-size:0.8rem;color:var(--muted);">${d.github_body.slice(0,200)}</code>`;
                 }
-            } catch { info.textContent = 'Network error'; info.style.color = '#f87171'; }
+            } catch (e) { info.innerHTML = `<span style="color:#f87171">Network error: ${e}</span>`; }
             btn.disabled = false;
+        };
+
+        document.getElementById('scan-diagnose-btn').onclick = async () => {
+            const r = await apiFetch('/api/admin/scan/diagnose');
+            const d = await r.json();
+            const info = document.getElementById('scan-info');
+            info.innerHTML = Object.entries(d).map(([k,v]) =>
+                `<span style="color:${v === true ? 'var(--success)' : v === false ? '#f87171' : 'var(--muted)'}">${k}: ${v}</span>`
+            ).join(' | ');
         };
 
         document.getElementById('scan-history-btn').onclick = async () => {
