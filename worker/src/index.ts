@@ -530,6 +530,38 @@ export default {
       }
     }
 
+    // GET /api/admin/movers?days=7 - Top score movers
+    if (path === '/api/admin/movers' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const days = parseInt(url.searchParams.get('days') || '7');
+      const since = `datetime('now', '-${days} days')`;
+
+      const risers = await env.DB.prepare(
+        `SELECT domain, SUM(delta) as total_delta, MIN(old_score) as from_score, MAX(new_score) as to_score
+         FROM score_history WHERE rescored_at > ${since} AND delta > 0
+         GROUP BY domain ORDER BY total_delta DESC LIMIT 10`
+      ).all();
+      const fallers = await env.DB.prepare(
+        `SELECT domain, SUM(delta) as total_delta, MIN(new_score) as to_score, MAX(old_score) as from_score
+         FROM score_history WHERE rescored_at > ${since} AND delta < 0
+         GROUP BY domain ORDER BY total_delta ASC LIMIT 10`
+      ).all();
+      const stats = await env.DB.prepare(
+        `SELECT COUNT(DISTINCT domain) as total_rescored, AVG(ABS(delta)) as avg_delta, MAX(rescored_at) as last_rescore
+         FROM score_history WHERE rescored_at > ${since}`
+      ).first<{ total_rescored: number; avg_delta: number; last_rescore: string }>();
+
+      return json({
+        days,
+        total_rescored: stats?.total_rescored || 0,
+        avg_delta: Math.round((stats?.avg_delta || 0) * 10) / 10,
+        last_rescore_at: stats?.last_rescore || null,
+        top_risers: risers.results || [],
+        top_fallers: fallers.results || [],
+      });
+    }
+
     // GET /api/admin/scan/diagnose - Diagnostic info for scan trigger
     if (path === '/api/admin/scan/diagnose' && request.method === 'GET') {
       const [user, err] = await requireAdmin(request, env);
