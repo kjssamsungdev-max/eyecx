@@ -433,6 +433,45 @@ export default {
       return json(result);
     }
 
+    // GET /api/admin/threads - Thread moderation list
+    if (path === '/api/admin/threads' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const threads = await env.DB.prepare(
+        `SELECT t.id, t.title, t.author_id, u.username, t.created_at, t.views, t.category, t.hidden,
+         t.reply_count, t.upvotes, t.downvotes
+         FROM threads t LEFT JOIN community_users u ON u.id = t.author_id
+         ORDER BY t.created_at DESC LIMIT 100`
+      ).all();
+      const comments = await env.DB.prepare(
+        `SELECT c.id, c.body, c.parent_id, c.created_at, c.hidden, u.username,
+         t.title as thread_title
+         FROM comments c
+         LEFT JOIN community_users u ON u.id = c.author_id
+         LEFT JOIN threads t ON c.parent_type = 'thread' AND c.parent_id = t.id
+         WHERE c.deleted = 0 ORDER BY c.created_at DESC LIMIT 20`
+      ).all();
+      return json({ threads: threads.results || [], recent_comments: comments.results || [] });
+    }
+
+    // POST /api/admin/threads/:id/hide - Hide a thread
+    if (path.match(/^\/api\/admin\/threads\/\d+\/hide$/) && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[4]);
+      await env.DB.prepare('UPDATE threads SET hidden = 1 WHERE id = ?').bind(id).run();
+      return json({ ok: true, id, hidden: true });
+    }
+
+    // DELETE /api/admin/comments/:id - Soft-hide a comment
+    if (path.match(/^\/api\/admin\/comments\/\d+$/) && request.method === 'DELETE') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[4]);
+      await env.DB.prepare('UPDATE comments SET hidden = 1 WHERE id = ?').bind(id).run();
+      return json({ ok: true, id, hidden: true });
+    }
+
     // POST /api/admin/sales/extract - Run sales extraction
     if (path === '/api/admin/sales/extract' && request.method === 'POST') {
       const [user, err] = await requireAdmin(request, env);
@@ -1061,11 +1100,11 @@ async function listThreads(url: URL, env: Env): Promise<Response> {
   const category = url.searchParams.get('category');
 
   let query = `SELECT t.*, u.username, u.avatar_url FROM threads t
-    LEFT JOIN community_users u ON t.author_id = u.id`;
+    LEFT JOIN community_users u ON t.author_id = u.id WHERE (t.hidden IS NULL OR t.hidden = 0)`;
   const params: any[] = [];
 
   if (category) {
-    query += ' WHERE t.category = ?';
+    query += ' AND t.category = ?';
     params.push(category);
   }
   query += ' ORDER BY t.pinned DESC, t.created_at DESC LIMIT ? OFFSET ?';
@@ -1110,7 +1149,7 @@ async function listComments(parentType: string, parentId: number, url: URL, env:
   const result = await env.DB.prepare(
     `SELECT c.*, u.username, u.avatar_url FROM comments c
      LEFT JOIN community_users u ON c.author_id = u.id
-     WHERE c.parent_type = ? AND c.parent_id = ? AND c.deleted = 0
+     WHERE c.parent_type = ? AND c.parent_id = ? AND c.deleted = 0 AND (c.hidden IS NULL OR c.hidden = 0)
      ORDER BY c.created_at ASC LIMIT ? OFFSET ?`
   ).bind(parentType, parentId, limit, offset).all();
 
