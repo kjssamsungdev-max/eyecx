@@ -675,6 +675,13 @@ export default {
       return json({ history: history.results || [], latest_run: latestRun });
     }
 
+    // ============ PUBLIC DOMAIN LISTING (marketplace) ============
+
+    // GET /api/domains - Public domain listing for marketplace
+    if (path === '/api/domains' && request.method === 'GET') {
+      return await getDomains(url, env);
+    }
+
     // ============ BEARER API_SECRET ROUTES (existing) ============
 
     // Auth required for all other endpoints
@@ -683,9 +690,32 @@ export default {
     }
 
     try {
-      // GET /api/domains
-      if (path === '/api/domains' && request.method === 'GET') {
-        return await getDomains(url, env);
+      // POST /api/domains/bulk - Bulk upsert domains (from daily scan pipeline)
+      if (path === '/api/domains/bulk' && request.method === 'POST') {
+        const rows = await request.json() as any[];
+        if (!Array.isArray(rows) || rows.length === 0) return error('Array of domain objects required');
+        if (rows.length > 1000) return error('Max 1000 per batch');
+
+        let inserted = 0;
+        for (const r of rows) {
+          if (!r.domain || !r.tld) continue;
+          try {
+            await env.DB.prepare(
+              `INSERT OR REPLACE INTO domains (domain, tld, potential_score, tier, estimated_flip_value,
+               page_rank, wayback_snapshots, estimated_age_years, backlinks, majestic_rank, tranco_rank,
+               availability_status, source, first_seen, brand_score)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              r.domain, r.tld, r.potential_score || 0, r.tier || 'lead', r.estimated_flip_value || 0,
+              r.page_rank || null, r.wayback_snapshots || 0, r.estimated_age_years || null,
+              r.backlinks || 0, r.majestic_rank || null, r.tranco_rank || null,
+              r.availability_status || 'unknown', r.source || 'czds_dropped',
+              r.first_seen || new Date().toISOString(), r.brand_score || 0
+            ).run();
+            inserted++;
+          } catch {}
+        }
+        return json({ ok: true, inserted, total: rows.length });
       }
 
       // GET /api/domain/:domain
@@ -816,7 +846,7 @@ async function getDomains(url: URL, env: Env): Promise<Response> {
            majestic_rank, tranco_rank, availability_status, first_seen,
            score_version, last_rescored_at
     FROM domains
-    WHERE potential_score >= ?
+    WHERE potential_score >= ? AND availability_status != 'registered'
   `;
   const params: any[] = [minScore];
 

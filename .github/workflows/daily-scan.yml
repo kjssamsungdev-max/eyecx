@@ -190,15 +190,51 @@ jobs:
           fi
           echo "qualified=$QUALIFIED" >> $GITHUB_OUTPUT
 
-      - name: Upload to D1
+      - name: Upload to D1 via Worker API
         if: steps.score.outputs.qualified != '0'
         env:
-          D1_DATABASE_ID: ${{ env.D1_DATABASE_ID }}
+          EYECX_API_URL: https://eyecx-api.kjssamsungdev.workers.dev
+          EYECX_API_SECRET: ${{ secrets.EYECX_API_SECRET }}
         run: |
-          if [ -f results/scored.csv ]; then
-            echo "Uploading scored domains to D1..."
-            python scripts/upload_to_d1.py results/scored.csv
-          fi
+          if [ ! -f results/scored.csv ]; then echo "No CSV"; exit 0; fi
+
+          echo "Converting CSV to JSON and uploading in batches..."
+          python3 -c "
+          import csv, json, os, urllib.request
+
+          api = os.environ['EYECX_API_URL']
+          secret = os.environ['EYECX_API_SECRET']
+          rows = []
+          with open('results/scored.csv') as f:
+              for row in csv.DictReader(f):
+                  clean = {}
+                  for k, v in row.items():
+                      if v == '': clean[k] = None
+                      elif k in ('potential_score','wayback_snapshots','backlinks','majestic_rank','tranco_rank','brand_score'):
+                          clean[k] = int(v) if v else None
+                      elif k in ('page_rank','estimated_age_years','estimated_flip_value'):
+                          clean[k] = float(v) if v else None
+                      else: clean[k] = v
+                  rows.append(clean)
+
+          total_inserted = 0
+          batch_size = 200
+          for i in range(0, len(rows), batch_size):
+              batch = rows[i:i+batch_size]
+              data = json.dumps(batch).encode()
+              req = urllib.request.Request(
+                  f'{api}/api/domains/bulk',
+                  data=data,
+                  headers={'Authorization': f'Bearer {secret}', 'Content-Type': 'application/json'},
+                  method='POST'
+              )
+              resp = urllib.request.urlopen(req, timeout=30)
+              result = json.loads(resp.read())
+              total_inserted += result.get('inserted', 0)
+              print(f'  Batch {i//batch_size + 1}: {result.get(\"inserted\",0)}/{len(batch)} inserted')
+
+          print(f'Total uploaded: {total_inserted}/{len(rows)}')
+          "
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
