@@ -79,6 +79,57 @@ def load_dictionary() -> frozenset:
 
 DICTIONARY_WORDS = load_dictionary()
 
+# Default brand weights (used if API unavailable)
+DEFAULT_WEIGHTS: Dict[str, float] = {
+    'length_3': 40, 'length_4': 30, 'length_5': 20, 'length_6': 12, 'length_8': 5,
+    'clean_no_digits': 5, 'clean_no_hyphen': 3, 'pronounceable': 10, 'dictionary': 20,
+    'tld_premium': 5, 'tld_mid': 3, 'tld_standard': 2,
+}
+
+# Mutable at module level — loaded once per run, not per domain
+BRAND_WEIGHTS: Dict[str, Dict[str, float]] = {}  # tld -> signal -> weight
+
+
+def load_weights_from_api() -> None:
+    """Load scoring weights from Worker API. Falls back to defaults on failure.
+
+    Rule 5: assertions on side effects.
+    """
+    import urllib.request
+    api_url = os.getenv('EYECX_API_URL', 'https://eyecx-api.kjssamsungdev.workers.dev')
+    assert isinstance(api_url, str), "API URL must be str"
+
+    try:
+        req = urllib.request.Request(f'{api_url}/api/scoring/weights', headers={'User-Agent': 'EyeCX-Scorer'})
+        resp = urllib.request.urlopen(req, timeout=10)
+        import json as _json
+        data = _json.loads(resp.read())
+        for row in data.get('weights', []):
+            tld = row['tld']
+            if tld not in BRAND_WEIGHTS:
+                BRAND_WEIGHTS[tld] = {}
+            BRAND_WEIGHTS[tld][row['signal']] = float(row['weight'])
+        print(f'Loaded {len(data.get("weights",[]))} weights from API ({len(BRAND_WEIGHTS)} TLDs)')
+    except Exception as e:
+        print(f'WARNING: Failed to load weights from API ({e}), using defaults')
+
+    assert isinstance(BRAND_WEIGHTS, dict), "Weights must be dict"
+
+
+def get_weight(tld: str, signal: str) -> float:
+    """Get weight for a TLD+signal, falling back to * then default.
+
+    Rule 5: assertions on inputs.
+    """
+    assert isinstance(signal, str), "signal must be str"
+    assert isinstance(tld, str), "tld must be str"
+
+    if tld in BRAND_WEIGHTS and signal in BRAND_WEIGHTS[tld]:
+        return BRAND_WEIGHTS[tld][signal]
+    if '*' in BRAND_WEIGHTS and signal in BRAND_WEIGHTS['*']:
+        return BRAND_WEIGHTS['*'][signal]
+    return DEFAULT_WEIGHTS.get(signal, 0)
+
 
 # ============ RETRY HELPER (Rule 2: bounded retries) ============
 async def retry_with_backoff(coro_fn, max_attempts=MAX_RETRIES, base_delay=RETRY_BASE_DELAY):
@@ -241,40 +292,41 @@ async def batch_check_opr(session, domains, api_key):
 
 # ============ SCORING (Rule 4: under 60 lines) ============
 def calculate_brand_score(domain: str) -> int:
-    """Compute brandability score (0-55) from domain name properties.
+    """Compute brandability score (0-55) using dynamic weights.
 
     Rule 5: assertions on input and output.
     """
     assert isinstance(domain, str) and '.' in domain, "Valid FQDN required"
 
     name = domain.split('.')[0]
+    tld = '.' + domain.split('.')[-1]
     assert len(name) > 0, "Name label must not be empty"
 
-    brand = 0
+    brand = 0.0
 
-    # Length (shorter = more valuable)
-    if len(name) <= 3: brand += 40
-    elif len(name) <= 4: brand += 30
-    elif len(name) <= 5: brand += 20
-    elif len(name) <= 6: brand += 12
-    elif len(name) <= 8: brand += 5
+    # Length
+    if len(name) <= 3: brand += get_weight(tld, 'length_3')
+    elif len(name) <= 4: brand += get_weight(tld, 'length_4')
+    elif len(name) <= 5: brand += get_weight(tld, 'length_5')
+    elif len(name) <= 6: brand += get_weight(tld, 'length_6')
+    elif len(name) <= 8: brand += get_weight(tld, 'length_8')
 
     # Cleanliness
-    if not any(c.isdigit() for c in name): brand += 5
-    if '-' not in name: brand += 3
+    if not any(c.isdigit() for c in name): brand += get_weight(tld, 'clean_no_digits')
+    if '-' not in name: brand += get_weight(tld, 'clean_no_hyphen')
 
-    # Pronounceability (alternating consonant/vowel)
+    # Pronounceability
     if 4 <= len(name) <= 8:
         pairs_ok = all(
             (name[i] in VOWELS) != (name[i+1] in VOWELS)
             for i in range(len(name) - 1)
         )
-        if pairs_ok: brand += 10
+        if pairs_ok: brand += get_weight(tld, 'pronounceable')
 
-    # Dictionary word match
-    if name in DICTIONARY_WORDS: brand += 20
+    # Dictionary word
+    if name in DICTIONARY_WORDS: brand += get_weight(tld, 'dictionary')
 
-    result = min(brand, 55)
+    result = min(int(brand), 55)
     assert 0 <= result <= 55, f"Brand score out of range: {result}"
     return result
 
@@ -494,6 +546,7 @@ async def main():
     assert args.limit > 0, "Limit must be positive"
     assert args.min_score >= 0, "Min score must be non-negative"
 
+    load_weights_from_api()
     domains = load_and_filter_domains(args.input, args.limit)
     if not domains:
         print('No domains to process'); sys.exit(0)

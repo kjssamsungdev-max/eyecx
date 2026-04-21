@@ -127,3 +127,28 @@ CREATE TABLE IF NOT EXISTS score_history (
 CREATE INDEX IF NOT EXISTS idx_history_domain ON score_history(domain);
 CREATE INDEX IF NOT EXISTS idx_history_date ON score_history(rescored_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_delta ON score_history(delta DESC);
+
+-- Scoring weights (per-TLD per-signal, * = default)
+CREATE TABLE IF NOT EXISTS scoring_weights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tld TEXT NOT NULL,
+    signal TEXT NOT NULL,
+    weight REAL NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(tld, signal)
+);
+
+-- Weight change audit trail
+CREATE TABLE IF NOT EXISTS weight_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tld TEXT NOT NULL,
+    signal TEXT NOT NULL,
+    old_weight REAL NOT NULL,
+    new_weight REAL NOT NULL,
+    delta REAL NOT NULL,
+    reason TEXT,
+    changed_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_tld ON weight_history(tld);
+CREATE INDEX IF NOT EXISTS idx_wh_date ON weight_history(changed_at DESC);

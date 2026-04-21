@@ -546,6 +546,38 @@ export default {
       }
     }
 
+    // GET /api/scoring/weights - Public: current scoring weights
+    if (path === '/api/scoring/weights' && request.method === 'GET') {
+      const rows = await env.DB.prepare('SELECT tld, signal, weight FROM scoring_weights ORDER BY tld, signal').all();
+      return json({ weights: rows.results || [] });
+    }
+
+    // POST /api/admin/scoring/tune - Run self-tuning
+    if (path === '/api/admin/scoring/tune' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const result = await runSelfTuning(env);
+      return json(result);
+    }
+
+    // GET /api/admin/scoring/history - Weight change history
+    if (path === '/api/admin/scoring/history' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const rows = await env.DB.prepare(
+        'SELECT tld, signal, old_weight, new_weight, delta, reason, changed_at FROM weight_history ORDER BY changed_at DESC LIMIT 50'
+      ).all();
+      return json({ changes: rows.results || [] });
+    }
+
+    // POST /api/admin/scoring/reset - Reset weights to defaults
+    if (path === '/api/admin/scoring/reset' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      await env.DB.prepare("DELETE FROM scoring_weights WHERE tld != '*'").run();
+      return json({ ok: true, message: 'Per-TLD overrides cleared, defaults restored' });
+    }
+
     // GET /api/admin/movers?days=7 - Top score movers
     if (path === '/api/admin/movers' && request.method === 'GET') {
       const [user, err] = await requireAdmin(request, env);
@@ -1839,6 +1871,117 @@ function extractTags(text: string): string[] {
     if (w.length > 3 && !stopwords.has(w)) freq[w] = (freq[w] || 0) + 1;
   }
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+}
+
+// ============ SELF-TUNING ============
+
+const TUNE_MIN_SALES = 20;
+const TUNE_MIN_BUCKET = 5;
+const TUNE_SHRINKAGE = 0.15;
+const TUNE_SIGNALS = ['length_3','length_4','length_5','length_6','length_8',
+  'clean_no_digits','clean_no_hyphen','pronounceable','dictionary'];
+const TUNE_BOUNDS: Record<string, [number, number]> = {
+  length_3: [20, 55], length_4: [15, 45], length_5: [10, 35],
+  length_6: [5, 25], length_8: [2, 15],
+  clean_no_digits: [2, 15], clean_no_hyphen: [1, 10],
+  pronounceable: [3, 20], dictionary: [8, 35],
+};
+
+function domainHasSignal(name: string, signal: string): boolean {
+  if (!name) return false;
+  const vowels = new Set('aeiouy'.split(''));
+  if (signal === 'length_3') return name.length <= 3;
+  if (signal === 'length_4') return name.length === 4;
+  if (signal === 'length_5') return name.length === 5;
+  if (signal === 'length_6') return name.length === 6;
+  if (signal === 'length_8') return name.length >= 7 && name.length <= 8;
+  if (signal === 'clean_no_digits') return !/\d/.test(name);
+  if (signal === 'clean_no_hyphen') return !name.includes('-');
+  if (signal === 'pronounceable') {
+    if (name.length < 4 || name.length > 8) return false;
+    return name.split('').every((c, i) => i === 0 || (vowels.has(c) !== vowels.has(name[i-1])));
+  }
+  if (signal === 'dictionary') return false; // can't check without word list in Worker
+  return false;
+}
+
+async function runSelfTuning(env: Env): Promise<{
+  tlds_processed: number; tlds_skipped: number; changes: number; details: any[];
+}> {
+  // Get sales grouped by TLD
+  const tldCounts = await env.DB.prepare(
+    'SELECT tld, COUNT(*) as cnt FROM market_sales GROUP BY tld HAVING cnt >= ?'
+  ).bind(TUNE_MIN_SALES).all<{ tld: string; cnt: number }>();
+
+  const eligible = (tldCounts.results || []).map(r => r.tld);
+  const allTlds = await env.DB.prepare(
+    'SELECT DISTINCT tld FROM market_sales'
+  ).all<{ tld: string }>();
+  const skipped = (allTlds.results || []).length - eligible.length;
+
+  let totalChanges = 0;
+  const details: any[] = [];
+
+  for (const tld of eligible) {
+    const sales = await env.DB.prepare(
+      'SELECT domain, sale_price_usd FROM market_sales WHERE tld = ? ORDER BY sale_price_usd DESC'
+    ).bind(tld).all<{ domain: string; sale_price_usd: number }>();
+
+    const rows = sales.results || [];
+    if (rows.length < TUNE_MIN_SALES) continue;
+
+    const median = rows[Math.floor(rows.length / 2)].sale_price_usd;
+    const high = rows.filter(r => r.sale_price_usd >= median);
+    const low = rows.filter(r => r.sale_price_usd < median);
+
+    for (const signal of TUNE_SIGNALS) {
+      const highHas = high.filter(r => domainHasSignal(r.domain.split('.')[0], signal)).length;
+      const lowHas = low.filter(r => domainHasSignal(r.domain.split('.')[0], signal)).length;
+
+      if (highHas < TUNE_MIN_BUCKET && lowHas < TUNE_MIN_BUCKET) continue;
+
+      const highRate = high.length > 0 ? highHas / high.length : 0;
+      const lowRate = low.length > 0 ? lowHas / low.length : 0;
+      const lift = highRate - lowRate; // positive = signal predicts higher price
+
+      // Get current weight
+      const current = await env.DB.prepare(
+        "SELECT weight FROM scoring_weights WHERE tld = ? AND signal = ?"
+      ).bind(tld, signal).first<{ weight: number }>();
+      const defaultW = await env.DB.prepare(
+        "SELECT weight FROM scoring_weights WHERE tld = '*' AND signal = ?"
+      ).bind(signal).first<{ weight: number }>();
+      const oldWeight = current?.weight ?? defaultW?.weight ?? 10;
+
+      // Compute new weight with shrinkage
+      const rawDelta = lift * oldWeight;
+      const delta = rawDelta * TUNE_SHRINKAGE;
+      const bounds = TUNE_BOUNDS[signal] || [0, 50];
+      const newWeight = Math.round(Math.max(bounds[0], Math.min(bounds[1], oldWeight + delta)) * 10) / 10;
+
+      if (Math.abs(newWeight - oldWeight) < 0.1) continue; // idempotent: skip no-change
+
+      const reason = `${tld} ${signal}: high=${highHas}/${high.length} low=${lowHas}/${low.length} lift=${lift.toFixed(2)} shrink=${TUNE_SHRINKAGE}`;
+
+      await env.DB.prepare(
+        "INSERT INTO scoring_weights (tld, signal, weight) VALUES (?, ?, ?) ON CONFLICT(tld, signal) DO UPDATE SET weight = ?, updated_at = datetime('now')"
+      ).bind(tld, signal, newWeight, newWeight).run();
+
+      await env.DB.prepare(
+        'INSERT INTO weight_history (tld, signal, old_weight, new_weight, delta, reason) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(tld, signal, oldWeight, newWeight, Math.round((newWeight - oldWeight) * 10) / 10, reason).run();
+
+      totalChanges++;
+      details.push({ tld, signal, old: oldWeight, new: newWeight, reason: reason.slice(0, 120) });
+    }
+  }
+
+  return {
+    tlds_processed: eligible.length,
+    tlds_skipped: skipped,
+    changes: totalChanges,
+    details,
+  };
 }
 
 // ============ DOMAIN RESCORE ============
