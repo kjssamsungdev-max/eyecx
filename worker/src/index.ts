@@ -195,6 +195,23 @@ export default {
       console.error('Sales extraction error:', e);
     }
 
+    // Nightly rescore at 4 AM UTC
+    if (hour === 4) {
+      try {
+        console.log('Nightly rescore starting...');
+        const result = await runDomainRescore(env);
+        console.log(`Rescore done: ${result.total} domains, avg delta: ${result.avg_delta}`);
+
+        // Log to scan_history
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO scan_history (scan_date, total_scanned, total_qualified, diamonds, golds, silvers, duration_sec)
+           VALUES (DATE('now'), ?, ?, 0, 0, 0, 0)`
+        ).bind(result.total, result.total).run();
+      } catch (e) {
+        console.error('Nightly rescore error:', e);
+      }
+    }
+
     // CZDS only at 1 AM (note: ICANN blocks CF Worker IPs, so this is a no-op
     // in practice — CZDS downloads happen via GitHub Actions instead)
     if (hour === 1 && env.CZDS_USERNAME && env.CZDS_PASSWORD) {
