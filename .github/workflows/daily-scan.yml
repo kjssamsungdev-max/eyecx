@@ -40,50 +40,45 @@ jobs:
     steps:
       - name: Diff zone snapshots
         id: diff
+        env:
+          EYECX_API_URL: https://eyecx-api.kjssamsungdev.workers.dev
+          EYECX_API_SECRET: ${{ secrets.EYECX_API_SECRET }}
         run: |
           set -eo pipefail
           mkdir -p snapshots dropped
 
-          # Find the two most recent snapshot dates available in R2
-          # If a date is provided, use it as "newer" and day-before as "older"
           INPUT_DATE="${{ github.event.inputs.date || '' }}"
 
+          # Query Worker API to find the two most recent snapshots per TLD
+          # Use xyz as the reference TLD — all three TLDs share the same CZDS schedule
+          echo "Querying R2 for available snapshots..."
+          DATES=$(curl -s -H "Authorization: Bearer $EYECX_API_SECRET" \
+            "$EYECX_API_URL/api/zones/xyz" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          dates = sorted([s['date'] for s in data.get('snapshots', []) if s.get('size', 0) > 10000], reverse=True)
+          for d in dates[:5]: print(d)
+          ")
+          echo "Available snapshot dates: $DATES"
+
+          NEWER=""
+          OLDER=""
           if [ -n "$INPUT_DATE" ]; then
             NEWER="$INPUT_DATE"
-            OLDER=$(date -u -d "$INPUT_DATE - 1 day" +%Y-%m-%d)
+            OLDER=$(echo "$DATES" | grep -v "^${INPUT_DATE}$" | head -1)
           else
-            # Auto-detect: try today first, then yesterday, then day before
-            # The most recent CZDS run determines what's available
-            TODAY=$(date -u +%Y-%m-%d)
-            YESTERDAY=$(date -u -d "$TODAY - 1 day" +%Y-%m-%d)
-            DAY_BEFORE=$(date -u -d "$TODAY - 2 days" +%Y-%m-%d)
-
-            # Check what exists for xyz (representative TLD)
-            HAVE_TODAY=$(aws s3api head-object --bucket eyecx-zones \
-              --key "snapshots/xyz/xyz_${TODAY}.domains.txt" \
-              --endpoint-url "$R2_ENDPOINT" --query "ContentLength" --output text 2>/dev/null || echo "0")
-            HAVE_YESTERDAY=$(aws s3api head-object --bucket eyecx-zones \
-              --key "snapshots/xyz/xyz_${YESTERDAY}.domains.txt" \
-              --endpoint-url "$R2_ENDPOINT" --query "ContentLength" --output text 2>/dev/null || echo "0")
-            HAVE_DAY_BEFORE=$(aws s3api head-object --bucket eyecx-zones \
-              --key "snapshots/xyz/xyz_${DAY_BEFORE}.domains.txt" \
-              --endpoint-url "$R2_ENDPOINT" --query "ContentLength" --output text 2>/dev/null || echo "0")
-
-            echo "R2 snapshots: today=$TODAY($HAVE_TODAY) yesterday=$YESTERDAY($HAVE_YESTERDAY) day_before=$DAY_BEFORE($HAVE_DAY_BEFORE)"
-
-            if [ "$HAVE_TODAY" -gt 10000 ] && [ "$HAVE_YESTERDAY" -gt 10000 ]; then
-              NEWER="$TODAY"; OLDER="$YESTERDAY"
-            elif [ "$HAVE_YESTERDAY" -gt 10000 ] && [ "$HAVE_DAY_BEFORE" -gt 10000 ]; then
-              NEWER="$YESTERDAY"; OLDER="$DAY_BEFORE"
-            else
-              echo "::error::Need two consecutive snapshots. Found: today=$HAVE_TODAY yesterday=$HAVE_YESTERDAY day_before=$HAVE_DAY_BEFORE"
-              echo "has_dropped=false" >> $GITHUB_OUTPUT
-              echo "total_dropped=0" >> $GITHUB_OUTPUT
-              exit 1
-            fi
+            NEWER=$(echo "$DATES" | head -1)
+            OLDER=$(echo "$DATES" | sed -n '2p')
           fi
 
-          echo "Diffing zones: $OLDER vs $NEWER"
+          if [ -z "$NEWER" ] || [ -z "$OLDER" ]; then
+            echo "::error::Need two snapshots. Found: $(echo $DATES | tr '\n' ' ')"
+            echo "has_dropped=false" >> $GITHUB_OUTPUT
+            echo "total_dropped=0" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "Diffing: $OLDER (older) vs $NEWER (newer)"
 
           TOTAL=0
           DROPPED_FILE="dropped/all_dropped_${NEWER}.txt"
@@ -118,7 +113,8 @@ jobs:
 
           if [ "$TOTAL" -gt 0 ]; then
             echo "has_dropped=true" >> $GITHUB_OUTPUT
-          else
+          elif [ "$TOTAL" -eq 0 ]; then
+            echo "::warning::Zero dropped domains between $OLDER and $NEWER — snapshots may be identical"
             echo "has_dropped=false" >> $GITHUB_OUTPUT
           fi
 
