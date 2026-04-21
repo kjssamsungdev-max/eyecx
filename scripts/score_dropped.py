@@ -45,12 +45,39 @@ WAYBACK_429_DELAY = 5.0
 CHECKPOINT_INTERVAL = 100
 MAX_DOMAIN_LEN = 30
 SPAM_DIGITS_RE = re.compile(r'\d{3,}')
+VOWELS = frozenset('aeiouy')
 
 CSV_FIELDS = [
     'domain', 'tld', 'potential_score', 'tier', 'estimated_flip_value',
     'page_rank', 'wayback_snapshots', 'estimated_age_years', 'backlinks',
     'majestic_rank', 'tranco_rank', 'availability_status', 'source', 'first_seen',
+    'brand_score',
 ]
+
+
+# ============ DICTIONARY (Rule 6: loaded once at import) ============
+def load_dictionary() -> frozenset:
+    """Load common words from bundled file. Returns empty set if missing.
+
+    Rule 5: assertions on output.
+    """
+    words_path = os.path.join(os.path.dirname(__file__) or '.', 'common_words.txt')
+    assert isinstance(words_path, str), "words_path must be str"
+    words: set = set()
+    try:
+        with open(words_path) as f:
+            for line in f:
+                w = line.strip().lower()
+                if w:
+                    words.add(w)
+    except FileNotFoundError:
+        pass
+
+    result = frozenset(words)
+    assert isinstance(result, frozenset), "Must return frozenset"
+    return result
+
+DICTIONARY_WORDS = load_dictionary()
 
 
 # ============ RETRY HELPER (Rule 2: bounded retries) ============
@@ -213,8 +240,47 @@ async def batch_check_opr(session, domains, api_key):
 
 
 # ============ SCORING (Rule 4: under 60 lines) ============
-def calculate_score(pr, snapshots, age_years, tld):
-    """Score a domain (0-100). None snapshots treated as unknown (no penalty).
+def calculate_brand_score(domain: str) -> int:
+    """Compute brandability score (0-55) from domain name properties.
+
+    Rule 5: assertions on input and output.
+    """
+    assert isinstance(domain, str) and '.' in domain, "Valid FQDN required"
+
+    name = domain.split('.')[0]
+    assert len(name) > 0, "Name label must not be empty"
+
+    brand = 0
+
+    # Length (shorter = more valuable)
+    if len(name) <= 3: brand += 40
+    elif len(name) <= 4: brand += 30
+    elif len(name) <= 5: brand += 20
+    elif len(name) <= 6: brand += 12
+    elif len(name) <= 8: brand += 5
+
+    # Cleanliness
+    if not any(c.isdigit() for c in name): brand += 5
+    if '-' not in name: brand += 3
+
+    # Pronounceability (alternating consonant/vowel)
+    if 4 <= len(name) <= 8:
+        pairs_ok = all(
+            (name[i] in VOWELS) != (name[i+1] in VOWELS)
+            for i in range(len(name) - 1)
+        )
+        if pairs_ok: brand += 10
+
+    # Dictionary word match
+    if name in DICTIONARY_WORDS: brand += 20
+
+    result = min(brand, 55)
+    assert 0 <= result <= 55, f"Brand score out of range: {result}"
+    return result
+
+
+def calculate_score(pr, snapshots, age_years, tld, domain=None):
+    """Score a domain (0-100). Includes brandability if domain provided.
 
     Rule 5: assertions on inputs.
     """
@@ -246,6 +312,11 @@ def calculate_score(pr, snapshots, age_years, tld):
     if tld in ('.com', '.io', '.ai'): score += 5
     elif tld in ('.co', '.app', '.dev'): score += 3
     elif tld in ('.xyz', '.info', '.org'): score += 2
+
+    # Brandability bonus
+    if domain:
+        score += calculate_brand_score(domain)
+
     return min(score, 100)
 
 
@@ -345,7 +416,8 @@ def score_domain(domain, opr_results, wb_result, rdap_result, min_score):
 
     tld = '.' + domain.split('.')[-1]
     pr = opr_results.get(domain)
-    score = calculate_score(pr, snapshots, age_years, tld)
+    brand = calculate_brand_score(domain)
+    score = calculate_score(pr, snapshots, age_years, tld, domain)
 
     if score < min_score:
         return None
@@ -358,6 +430,7 @@ def score_domain(domain, opr_results, wb_result, rdap_result, min_score):
         'estimated_age_years': age_years, 'backlinks': 0,
         'majestic_rank': None, 'tranco_rank': None,
         'availability_status': availability, 'source': 'czds_dropped',
+        'brand_score': brand,
         'first_seen': datetime.now(timezone.utc).isoformat(),
     }
 

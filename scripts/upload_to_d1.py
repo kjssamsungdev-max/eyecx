@@ -86,7 +86,7 @@ async def main(csv_file: str):
             for k, v in row.items():
                 if v == '' or v is None:
                     clean_row[k] = None
-                elif k in ['potential_score', 'wayback_snapshots', 'backlinks', 'majestic_rank', 'tranco_rank']:
+                elif k in ['potential_score', 'wayback_snapshots', 'backlinks', 'majestic_rank', 'tranco_rank', 'brand_score']:
                     clean_row[k] = int(v) if v else None
                 elif k in ['page_rank', 'estimated_age_years', 'estimated_flip_value']:
                     clean_row[k] = float(v) if v else None
