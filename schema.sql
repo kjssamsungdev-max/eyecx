@@ -106,3 +106,24 @@ CREATE TABLE IF NOT EXISTS market_sales (
 
 CREATE INDEX IF NOT EXISTS idx_sales_tld ON market_sales(tld);
 CREATE INDEX IF NOT EXISTS idx_sales_price ON market_sales(sale_price_usd DESC);
+
+-- Score history (learning loop audit trail)
+CREATE TABLE IF NOT EXISTS score_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    old_score INTEGER NOT NULL,
+    new_score INTEGER NOT NULL,
+    delta INTEGER NOT NULL,
+    old_tier TEXT,
+    new_tier TEXT,
+    base INTEGER,
+    brand INTEGER,
+    similarity_bonus INTEGER,
+    feedback_bonus INTEGER,
+    reason TEXT,
+    rescored_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_domain ON score_history(domain);
+CREATE INDEX IF NOT EXISTS idx_history_date ON score_history(rescored_at DESC);
+CREATE INDEX IF NOT EXISTS idx_history_delta ON score_history(delta DESC);

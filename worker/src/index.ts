@@ -1845,17 +1845,31 @@ function tierFromScore(score: number): string {
   return 'lead';
 }
 
+function buildReason(tld: string, simBonus: number, fbBonus: number, agg: TldAggregates): string {
+  const parts: string[] = [];
+  const avg = agg.avg_sale[tld];
+  if (avg && simBonus !== 0) {
+    parts.push(`avg ${tld} sale $${Math.round(avg)} → ${simBonus > 0 ? '+' : ''}${Math.round(simBonus)} similarity`);
+  }
+  const fb = agg.feedback[tld];
+  if (fb && fbBonus !== 0) {
+    parts.push(`${fb.saved}s ${fb.bought}b ${fb.dismissed}d on ${tld} → ${fbBonus > 0 ? '+' : ''}${fbBonus.toFixed(1)} feedback`);
+  }
+  return (parts.join('; ') || 'no bonus signals').slice(0, 200);
+}
+
 async function runDomainRescore(env: Env): Promise<{
-  total: number; avg_delta: number; top_risers: any[]; top_fallers: any[];
+  total: number; avg_delta: number; changed: number; top_risers: any[]; top_fallers: any[];
 }> {
   const agg = await precomputeAggregates(env);
 
   const domains = await env.DB.prepare(
-    'SELECT domain, tld, potential_score FROM domains LIMIT 50000'
-  ).all<{ domain: string; tld: string; potential_score: number }>();
+    'SELECT domain, tld, potential_score, brand_score FROM domains LIMIT 50000'
+  ).all<{ domain: string; tld: string; potential_score: number; brand_score: number }>();
 
   const deltas: Array<{ domain: string; old_score: number; new_score: number; delta: number }> = [];
   let totalDelta = 0;
+  let changed = 0;
 
   for (const d of (domains.results || [])) {
     const simBonus = computeSimilarityBonus(d.tld, d.domain.length, agg);
@@ -1869,6 +1883,22 @@ async function runDomainRescore(env: Env): Promise<{
        last_rescored_at = datetime('now') WHERE domain = ?`
     ).bind(newScore, newTier, d.domain).run();
 
+    // Only record history when score actually changes (idempotent)
+    if (delta !== 0) {
+      const reason = buildReason(d.tld, simBonus, fbBonus, agg);
+      await env.DB.prepare(
+        `INSERT INTO score_history (domain, old_score, new_score, delta, old_tier, new_tier,
+         base, brand, similarity_bonus, feedback_bonus, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        d.domain, d.potential_score, newScore, delta,
+        tierFromScore(d.potential_score), newTier,
+        d.potential_score, d.brand_score || 0,
+        Math.round(simBonus), Math.round(fbBonus * 10) / 10, reason
+      ).run();
+      changed++;
+    }
+
     deltas.push({ domain: d.domain, old_score: d.potential_score, new_score: newScore, delta });
     totalDelta += Math.abs(delta);
   }
@@ -1879,6 +1909,7 @@ async function runDomainRescore(env: Env): Promise<{
 
   return {
     total,
+    changed,
     avg_delta: avgDelta,
     top_risers: deltas.slice(0, 10),
     top_fallers: deltas.slice(-10).reverse(),
