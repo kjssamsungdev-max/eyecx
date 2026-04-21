@@ -2014,13 +2014,14 @@
                 <table class="data-table" style="margin-top:16px;">
                     <tr><td style="color:var(--muted)">TLD</td><td>${d.tld}</td></tr>
                     <tr><td style="color:var(--muted)">Tier</td><td>${d.tier}</td></tr>
-                    <tr><td style="color:var(--muted)">Score</td><td>${d.potential_score}</td></tr>
+                    <tr><td style="color:var(--muted)">Score</td><td>${d.potential_score}${d.score_version ? ` (v${d.score_version})` : ''}</td></tr>
                     <tr><td style="color:var(--muted)">Flip value</td><td>$${d.estimated_flip_value}</td></tr>
                     <tr><td style="color:var(--muted)">Page rank</td><td>${d.page_rank || '-'}</td></tr>
                     <tr><td style="color:var(--muted)">Wayback snapshots</td><td>${d.wayback_snapshots || '-'}</td></tr>
                     <tr><td style="color:var(--muted)">Age</td><td>${d.estimated_age_years ? d.estimated_age_years + ' years' : '-'}</td></tr>
                     <tr><td style="color:var(--muted)">Availability</td><td>${d.availability_status || 'unknown'}</td></tr>
                     <tr><td style="color:var(--muted)">First seen</td><td>${d.first_seen?.slice(0,10) || '-'}</td></tr>
+                    ${d.last_rescored_at ? `<tr><td style="color:var(--muted)">Last rescored</td><td>${d.last_rescored_at?.slice(0,10)}</td></tr>` : ''}
                 </table>`;
         });
     }

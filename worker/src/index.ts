@@ -408,6 +408,14 @@ export default {
       return json({ ok: true, updated });
     }
 
+    // POST /api/admin/rescore - Reweighted domain scoring
+    if (path === '/api/admin/rescore' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const result = await runDomainRescore(env);
+      return json(result);
+    }
+
     // POST /api/admin/sales/extract - Run sales extraction
     if (path === '/api/admin/sales/extract' && request.method === 'POST') {
       const [user, err] = await requireAdmin(request, env);
@@ -647,7 +655,8 @@ async function getDomains(url: URL, env: Env): Promise<Response> {
   let query = `
     SELECT domain, tld, potential_score, tier, estimated_flip_value,
            page_rank, wayback_snapshots, estimated_age_years, backlinks,
-           majestic_rank, tranco_rank, availability_status, first_seen
+           majestic_rank, tranco_rank, availability_status, first_seen,
+           score_version, last_rescored_at
     FROM domains
     WHERE potential_score >= ?
   `;
@@ -1707,6 +1716,98 @@ function extractTags(text: string): string[] {
     if (w.length > 3 && !stopwords.has(w)) freq[w] = (freq[w] || 0) + 1;
   }
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+}
+
+// ============ DOMAIN RESCORE ============
+
+interface TldAggregates {
+  avg_sale: Record<string, number>;
+  feedback: Record<string, { saved: number; bought: number; dismissed: number }>;
+}
+
+async function precomputeAggregates(env: Env): Promise<TldAggregates> {
+  const salesByTld = await env.DB.prepare(
+    'SELECT tld, AVG(sale_price_usd) as avg_sale FROM market_sales GROUP BY tld'
+  ).all<{ tld: string; avg_sale: number }>();
+
+  const fbByTld = await env.DB.prepare(
+    `SELECT CASE WHEN instr(domain,'.') > 0 THEN '.' || substr(domain, instr(domain,'.')+1) ELSE '' END as tld,
+     signal, COUNT(*) as cnt FROM domain_feedback GROUP BY tld, signal`
+  ).all<{ tld: string; signal: string; cnt: number }>();
+
+  const avg_sale: Record<string, number> = {};
+  for (const r of (salesByTld.results || [])) avg_sale[r.tld] = r.avg_sale;
+
+  const feedback: Record<string, { saved: number; bought: number; dismissed: number }> = {};
+  for (const r of (fbByTld.results || [])) {
+    if (!feedback[r.tld]) feedback[r.tld] = { saved: 0, bought: 0, dismissed: 0 };
+    if (r.signal === 'saved') feedback[r.tld].saved = r.cnt;
+    if (r.signal === 'bought') feedback[r.tld].bought = r.cnt;
+    if (r.signal === 'dismissed') feedback[r.tld].dismissed = r.cnt;
+  }
+
+  return { avg_sale, feedback };
+}
+
+function computeSimilarityBonus(tld: string, domainLen: number, agg: TldAggregates): number {
+  const avg = agg.avg_sale[tld];
+  if (!avg || avg <= 0) return 0;
+  return Math.min(20, Math.max(0, Math.log(avg / 100) * 5));
+}
+
+function computeFeedbackBonus(tld: string, agg: TldAggregates): number {
+  const fb = agg.feedback[tld];
+  if (!fb) return 0;
+  const raw = (fb.saved + fb.bought * 3 - fb.dismissed) * 0.5;
+  return Math.min(15, Math.max(-10, raw));
+}
+
+function tierFromScore(score: number): string {
+  if (score >= 85) return 'diamond';
+  if (score >= 70) return 'gold';
+  if (score >= 55) return 'silver';
+  if (score >= 40) return 'bronze';
+  return 'lead';
+}
+
+async function runDomainRescore(env: Env): Promise<{
+  total: number; avg_delta: number; top_risers: any[]; top_fallers: any[];
+}> {
+  const agg = await precomputeAggregates(env);
+
+  const domains = await env.DB.prepare(
+    'SELECT domain, tld, potential_score FROM domains LIMIT 50000'
+  ).all<{ domain: string; tld: string; potential_score: number }>();
+
+  const deltas: Array<{ domain: string; old_score: number; new_score: number; delta: number }> = [];
+  let totalDelta = 0;
+
+  for (const d of (domains.results || [])) {
+    const simBonus = computeSimilarityBonus(d.tld, d.domain.length, agg);
+    const fbBonus = computeFeedbackBonus(d.tld, agg);
+    const newScore = Math.min(100, Math.max(0, Math.round(d.potential_score + simBonus + fbBonus)));
+    const newTier = tierFromScore(newScore);
+    const delta = newScore - d.potential_score;
+
+    await env.DB.prepare(
+      `UPDATE domains SET potential_score = ?, tier = ?, score_version = score_version + 1,
+       last_rescored_at = datetime('now') WHERE domain = ?`
+    ).bind(newScore, newTier, d.domain).run();
+
+    deltas.push({ domain: d.domain, old_score: d.potential_score, new_score: newScore, delta });
+    totalDelta += Math.abs(delta);
+  }
+
+  deltas.sort((a, b) => b.delta - a.delta);
+  const total = deltas.length;
+  const avgDelta = total > 0 ? Math.round(totalDelta / total * 10) / 10 : 0;
+
+  return {
+    total,
+    avg_delta: avgDelta,
+    top_risers: deltas.slice(0, 10),
+    top_fallers: deltas.slice(-10).reverse(),
+  };
 }
 
 // ============ SALES EXTRACTION ============
