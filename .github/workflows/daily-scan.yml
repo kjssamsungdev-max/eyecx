@@ -137,9 +137,10 @@ jobs:
           fi
 
           if [ -z "$DROPPED" ] || [ ! -f "$DROPPED" ]; then
-            echo "No dropped domains file found"
+            echo "::error::No dropped domains file found — diff-zones may have failed"
+            ls -la dropped/ 2>/dev/null || echo "  dropped/ directory does not exist"
             echo "qualified=0" >> $GITHUB_OUTPUT
-            exit 0
+            exit 1
           fi
 
           TOTAL=$(wc -l < "$DROPPED")
