@@ -42,39 +42,73 @@ jobs:
         id: diff
         run: |
           set -eo pipefail
-          TODAY="${{ github.event.inputs.date || '' }}"
-          if [ -z "$TODAY" ]; then TODAY=$(date -u +%Y-%m-%d); fi
-          YESTERDAY=$(date -u -d "$TODAY - 1 day" +%Y-%m-%d)
-
-          echo "Diffing zones: $YESTERDAY vs $TODAY"
           mkdir -p snapshots dropped
 
+          # Find the two most recent snapshot dates available in R2
+          # If a date is provided, use it as "newer" and day-before as "older"
+          INPUT_DATE="${{ github.event.inputs.date || '' }}"
+
+          if [ -n "$INPUT_DATE" ]; then
+            NEWER="$INPUT_DATE"
+            OLDER=$(date -u -d "$INPUT_DATE - 1 day" +%Y-%m-%d)
+          else
+            # Auto-detect: try today first, then yesterday, then day before
+            # The most recent CZDS run determines what's available
+            TODAY=$(date -u +%Y-%m-%d)
+            YESTERDAY=$(date -u -d "$TODAY - 1 day" +%Y-%m-%d)
+            DAY_BEFORE=$(date -u -d "$TODAY - 2 days" +%Y-%m-%d)
+
+            # Check what exists for xyz (representative TLD)
+            HAVE_TODAY=$(aws s3api head-object --bucket eyecx-zones \
+              --key "snapshots/xyz/xyz_${TODAY}.domains.txt" \
+              --endpoint-url "$R2_ENDPOINT" --query "ContentLength" --output text 2>/dev/null || echo "0")
+            HAVE_YESTERDAY=$(aws s3api head-object --bucket eyecx-zones \
+              --key "snapshots/xyz/xyz_${YESTERDAY}.domains.txt" \
+              --endpoint-url "$R2_ENDPOINT" --query "ContentLength" --output text 2>/dev/null || echo "0")
+            HAVE_DAY_BEFORE=$(aws s3api head-object --bucket eyecx-zones \
+              --key "snapshots/xyz/xyz_${DAY_BEFORE}.domains.txt" \
+              --endpoint-url "$R2_ENDPOINT" --query "ContentLength" --output text 2>/dev/null || echo "0")
+
+            echo "R2 snapshots: today=$TODAY($HAVE_TODAY) yesterday=$YESTERDAY($HAVE_YESTERDAY) day_before=$DAY_BEFORE($HAVE_DAY_BEFORE)"
+
+            if [ "$HAVE_TODAY" -gt 10000 ] && [ "$HAVE_YESTERDAY" -gt 10000 ]; then
+              NEWER="$TODAY"; OLDER="$YESTERDAY"
+            elif [ "$HAVE_YESTERDAY" -gt 10000 ] && [ "$HAVE_DAY_BEFORE" -gt 10000 ]; then
+              NEWER="$YESTERDAY"; OLDER="$DAY_BEFORE"
+            else
+              echo "::error::Need two consecutive snapshots. Found: today=$HAVE_TODAY yesterday=$HAVE_YESTERDAY day_before=$HAVE_DAY_BEFORE"
+              echo "has_dropped=false" >> $GITHUB_OUTPUT
+              echo "total_dropped=0" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          fi
+
+          echo "Diffing zones: $OLDER vs $NEWER"
+
           TOTAL=0
-          DROPPED_FILE="dropped/all_dropped_${TODAY}.txt"
+          DROPPED_FILE="dropped/all_dropped_${NEWER}.txt"
           > "$DROPPED_FILE"
 
           for TLD in xyz info org; do
-            YKEY="snapshots/${TLD}/${TLD}_${YESTERDAY}.domains.txt"
-            TKEY="snapshots/${TLD}/${TLD}_${TODAY}.domains.txt"
+            OKEY="snapshots/${TLD}/${TLD}_${OLDER}.domains.txt"
+            NKEY="snapshots/${TLD}/${TLD}_${NEWER}.domains.txt"
 
             echo "Downloading $TLD snapshots..."
-            aws s3 cp "s3://eyecx-zones/$YKEY" "snapshots/${TLD}_yesterday.txt" \
-              --endpoint-url "$R2_ENDPOINT" --no-progress 2>/dev/null || { echo "  No yesterday snapshot for $TLD"; continue; }
-            aws s3 cp "s3://eyecx-zones/$TKEY" "snapshots/${TLD}_today.txt" \
-              --endpoint-url "$R2_ENDPOINT" --no-progress 2>/dev/null || { echo "  No today snapshot for $TLD"; continue; }
+            aws s3 cp "s3://eyecx-zones/$OKEY" "snapshots/${TLD}_older.txt" \
+              --endpoint-url "$R2_ENDPOINT" --no-progress 2>/dev/null || { echo "  No older snapshot for $TLD"; continue; }
+            aws s3 cp "s3://eyecx-zones/$NKEY" "snapshots/${TLD}_newer.txt" \
+              --endpoint-url "$R2_ENDPOINT" --no-progress 2>/dev/null || { echo "  No newer snapshot for $TLD"; continue; }
 
-            echo "Diffing $TLD..."
-            # comm requires sorted files — snapshots are already sorted
-            comm -23 "snapshots/${TLD}_yesterday.txt" "snapshots/${TLD}_today.txt" > "dropped/${TLD}_dropped.txt"
+            echo "Diffing $TLD ($OLDER vs $NEWER)..."
+            comm -23 "snapshots/${TLD}_older.txt" "snapshots/${TLD}_newer.txt" > "dropped/${TLD}_dropped.txt"
 
             COUNT=$(wc -l < "dropped/${TLD}_dropped.txt")
             echo "  $TLD: $COUNT dropped domains"
             cat "dropped/${TLD}_dropped.txt" >> "$DROPPED_FILE"
             TOTAL=$((TOTAL + COUNT))
 
-            # Upload dropped list to R2
             aws s3 cp "dropped/${TLD}_dropped.txt" \
-              "s3://eyecx-zones/dropped/${TLD}/dropped_${TLD}_${TODAY}.txt" \
+              "s3://eyecx-zones/dropped/${TLD}/dropped_${TLD}_${NEWER}.txt" \
               --endpoint-url "$R2_ENDPOINT" --no-progress
           done
 
@@ -129,12 +163,12 @@ jobs:
         run: |
           set -eo pipefail
           LIMIT="${{ github.event.inputs.limit || '5000' }}"
-          DROPPED="dropped/all_dropped_$(date -u +%Y-%m-%d).txt"
 
-          if [ ! -f "$DROPPED" ]; then
-            # Try finding any dropped file
-            DROPPED=$(ls dropped/all_dropped_*.txt 2>/dev/null | head -1)
-          fi
+          # Find the dropped file — don't hardcode today's date, use whatever diff-zones produced
+          DROPPED=$(ls dropped/all_dropped_*.txt 2>/dev/null | sort | tail -1)
+
+          echo "Looking for dropped file..."
+          ls -la dropped/ 2>/dev/null || echo "  dropped/ empty"
 
           if [ -z "$DROPPED" ] || [ ! -f "$DROPPED" ]; then
             echo "::error::No dropped domains file found — diff-zones may have failed"
