@@ -1117,6 +1117,7 @@
                 <button data-tab="admin-content">Articles</button>
                 <button data-tab="admin-sales">Sales Intel</button>
                 <button data-tab="admin-movers">Movers</button>
+                <button data-tab="admin-tuning">Tuning</button>
                 <button data-tab="admin-threads">Threads</button>
                 <button data-tab="admin-waitlist">Waitlist</button>
             </div>
@@ -1124,6 +1125,7 @@
             <div id="admin-curated" style="display:none;"></div>
             <div id="admin-sales" style="display:none;"></div>
             <div id="admin-movers" style="display:none;"></div>
+            <div id="admin-tuning" style="display:none;"></div>
             <div id="admin-threads" style="display:none;"></div>
             <div id="admin-users" style="display:none;"></div>
             <div id="admin-content" style="display:none;"></div>
@@ -1384,7 +1386,7 @@
                 }">${fbMap[s]||0}</div><div class="lbl">${s}</div></div>`).join('');
 
         // Tab switching
-        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-threads','admin-users','admin-content','admin-waitlist'];
+        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-threads','admin-users','admin-content','admin-waitlist'];
         document.querySelectorAll('#admin-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
@@ -1421,6 +1423,7 @@
         await loadAdminCurated();
         await loadAdminSales();
         await loadAdminMovers();
+        await loadAdminTuning();
         await loadAdminThreads();
     }
 
@@ -1607,6 +1610,78 @@
         document.getElementById('movers-window').onchange = (e) => {
             moversDays = parseInt(e.target.value);
             loadAdminMovers();
+        };
+    }
+
+    // ============ ADMIN TUNING TAB ============
+    async function loadAdminTuning() {
+        const el = document.getElementById('admin-tuning');
+        el.innerHTML = '<p style="color:var(--muted)">Loading weights...</p>';
+
+        const [wResp, hResp] = await Promise.all([
+            fetch(`${API}/api/scoring/weights`),
+            apiFetch('/api/admin/scoring/history'),
+        ]);
+        const wData = await wResp.json();
+        const hData = await hResp.json();
+        const weights = wData.weights || [];
+        const changes = hData.changes || [];
+
+        // Group weights by TLD
+        const byTld = {};
+        for (const w of weights) {
+            if (!byTld[w.tld]) byTld[w.tld] = {};
+            byTld[w.tld][w.signal] = w.weight;
+        }
+        const tlds = Object.keys(byTld).sort();
+        const signals = [...new Set(weights.map(w => w.signal))].sort();
+        const defaults = byTld['*'] || {};
+
+        el.innerHTML = `
+            <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;">
+                <button class="btn btn-primary" style="padding:8px 16px;" id="tune-now-btn">Tune now</button>
+                <button class="vote-btn" id="reset-weights-btn">Reset to defaults</button>
+                <span id="tune-msg" style="color:var(--muted);font-size:0.9rem;"></span>
+            </div>
+            <h3 style="margin-bottom:12px;">Weights Matrix</h3>
+            <div style="overflow-x:auto;">
+            <table class="data-table" style="font-size:0.85rem;">
+                <tr><th>Signal</th>${tlds.map(t => `<th>${t}</th>`).join('')}</tr>
+                ${signals.map(sig => `<tr>
+                    <td style="font-weight:600;">${sig}</td>
+                    ${tlds.map(t => {
+                        const v = byTld[t]?.[sig];
+                        const def = defaults[sig];
+                        const delta = v !== undefined && def !== undefined ? Math.round((v - def) * 10) / 10 : 0;
+                        const color = delta > 0 ? 'var(--success)' : delta < 0 ? '#f87171' : 'var(--muted)';
+                        return `<td>${v ?? '-'} ${delta !== 0 ? `<span style="color:${color};font-size:0.75rem;">(${delta > 0 ? '+' : ''}${delta})</span>` : ''}</td>`;
+                    }).join('')}
+                </tr>`).join('')}
+            </table>
+            </div>
+            <h3 style="margin:24px 0 12px;">Recent Changes</h3>
+            ${changes.length ? changes.map(c => `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.85rem;">
+                <span style="color:var(--muted)">${c.changed_at?.slice(0,16)}</span>
+                <span style="font-weight:600;">${c.tld} ${c.signal}</span>
+                ${c.old_weight} → ${c.new_weight}
+                <span style="color:${c.delta > 0 ? 'var(--success)' : '#f87171'}">(${c.delta > 0 ? '+' : ''}${c.delta})</span>
+                ${c.reason ? `<div style="color:var(--muted);font-size:0.75rem;">${c.reason}</div>` : ''}
+            </div>`).join('') : '<p style="color:var(--muted)">No weight changes yet. Click "Tune now" to analyze market data.</p>'}`;
+
+        document.getElementById('tune-now-btn').onclick = async () => {
+            const msg = document.getElementById('tune-msg');
+            msg.textContent = 'Tuning...';
+            const r = await apiFetch('/api/admin/scoring/tune', { method: 'POST' });
+            const d = await r.json();
+            msg.innerHTML = `Done: ${d.tlds_processed} TLDs, ${d.changes} changes, ${d.tlds_skipped} skipped (insufficient data)`;
+            msg.style.color = d.changes > 0 ? 'var(--success)' : 'var(--muted)';
+            if (d.changes > 0) setTimeout(() => loadAdminTuning(), 1500);
+        };
+
+        document.getElementById('reset-weights-btn').onclick = async () => {
+            if (!confirm('Reset all per-TLD weight overrides to defaults?')) return;
+            await apiFetch('/api/admin/scoring/reset', { method: 'POST' });
+            loadAdminTuning();
         };
     }
 
