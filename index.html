@@ -1535,7 +1535,17 @@
                     <td style="color:var(--success);font-weight:600;">$${s.sale_price_usd.toLocaleString()}</td>
                     <td>${s.source_name||''}</td>
                 </tr>`).join('')}
-            </table>` : '<p style="color:var(--muted)">No sales extracted yet. Click "Extract sales" to scan curated articles.</p>'}`;
+            </table>` : '<p style="color:var(--muted)">No sales extracted yet. Click "Extract sales" to scan curated articles.</p>'}
+            ${(data.recent_extractions||[]).length ? `<h3 style="margin:24px 0 12px;">Recent Extractions (input to rescore)</h3>
+            <table class="data-table">
+                <tr><th>Domain</th><th>TLD</th><th>Price</th><th>Source</th><th>Extracted</th></tr>
+                ${(data.recent_extractions||[]).map(r => `<tr>
+                    <td>${r.domain}</td><td>${r.tld}</td>
+                    <td style="color:var(--success);">$${r.sale_price_usd?.toLocaleString()}</td>
+                    <td>${r.source_name||''}</td>
+                    <td>${r.extracted_at?.slice(0,10)||''}</td>
+                </tr>`).join('')}
+            </table>` : ''}`;
 
         document.getElementById('extract-sales-btn').onclick = async () => {
             const msg = document.getElementById('extract-sales-msg');
@@ -2116,9 +2126,28 @@
         modal.style.display = '';
         modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
 
-        fetch(`${API}/api/domains?search=${domain}&limit=1`).then(r => r.json()).then(data => {
+        Promise.all([
+            fetch(`${API}/api/domains?search=${domain}&limit=1`).then(r => r.json()),
+            fetch(`${API}/api/domain/${domain}/history?limit=30`).then(r => r.json()),
+        ]).then(([data, histData]) => {
             const d = (data.domains || [])[0];
             if (!d) { content.innerHTML = '<p>Domain not found.</p>'; return; }
+            const hist = histData.history || [];
+
+            const chartHtml = renderScoreChart(hist);
+
+            const histRows = hist.length ? hist.map(h => {
+                const dc = h.delta > 0 ? 'var(--success)' : h.delta < 0 ? '#f87171' : 'var(--muted)';
+                return `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.85rem;">
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--muted)">${h.rescored_at?.slice(0,16)}</span>
+                        <span>${h.old_score} → ${h.new_score} <span style="color:${dc};font-weight:600;">${h.delta>0?'+':''}${h.delta}</span></span>
+                    </div>
+                    ${h.reason ? `<div style="color:var(--muted);font-size:0.8rem;margin-top:2px;">${h.reason}</div>` : ''}
+                    <div style="color:var(--muted);font-size:0.75rem;margin-top:2px;">base:${h.base||0} brand:${h.brand||0} sim:${h.similarity_bonus||0} fb:${h.feedback_bonus||0}</div>
+                </div>`;
+            }).join('') : '<p style="color:var(--muted);font-size:0.9rem;">No score history yet — first rescore will populate this.</p>';
+
             content.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:center;">
                     <h3>${d.domain}</h3>
@@ -2130,13 +2159,44 @@
                     <tr><td style="color:var(--muted)">Score</td><td>${d.potential_score}${d.score_version ? ` (v${d.score_version})` : ''}</td></tr>
                     <tr><td style="color:var(--muted)">Flip value</td><td>$${d.estimated_flip_value}</td></tr>
                     <tr><td style="color:var(--muted)">Page rank</td><td>${d.page_rank || '-'}</td></tr>
-                    <tr><td style="color:var(--muted)">Wayback snapshots</td><td>${d.wayback_snapshots || '-'}</td></tr>
-                    <tr><td style="color:var(--muted)">Age</td><td>${d.estimated_age_years ? d.estimated_age_years + ' years' : '-'}</td></tr>
-                    <tr><td style="color:var(--muted)">Availability</td><td>${d.availability_status || 'unknown'}</td></tr>
+                    <tr><td style="color:var(--muted)">Wayback</td><td>${d.wayback_snapshots || '-'} snapshots</td></tr>
+                    <tr><td style="color:var(--muted)">Age</td><td>${d.estimated_age_years ? d.estimated_age_years + 'y' : '-'}</td></tr>
+                    <tr><td style="color:var(--muted)">Status</td><td>${d.availability_status || 'unknown'}</td></tr>
                     <tr><td style="color:var(--muted)">First seen</td><td>${d.first_seen?.slice(0,10) || '-'}</td></tr>
-                    ${d.last_rescored_at ? `<tr><td style="color:var(--muted)">Last rescored</td><td>${d.last_rescored_at?.slice(0,10)}</td></tr>` : ''}
-                </table>`;
+                    ${d.last_rescored_at ? `<tr><td style="color:var(--muted)">Rescored</td><td>${d.last_rescored_at?.slice(0,10)}</td></tr>` : ''}
+                </table>
+                <h3 style="margin:24px 0 12px;">Score History</h3>
+                ${chartHtml}
+                ${histRows}`;
         });
+    }
+
+    function renderScoreChart(history) {
+        if (!history || history.length < 2) return '';
+        const pts = history.slice().reverse();
+        const W = 500, H = 120, PAD = 30;
+        const scores = pts.map(p => p.new_score);
+        const minS = Math.max(0, Math.min(...scores) - 5);
+        const maxS = Math.min(100, Math.max(...scores) + 5);
+        const rangeS = maxS - minS || 1;
+
+        const xStep = (W - PAD * 2) / Math.max(pts.length - 1, 1);
+        const points = pts.map((p, i) => ({
+            x: PAD + i * xStep,
+            y: H - PAD - ((p.new_score - minS) / rangeS) * (H - PAD * 2),
+        }));
+        const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+        const dots = points.map(p =>
+            `<circle cx="${p.x}" cy="${p.y}" r="3" fill="var(--accent)"/>`
+        ).join('');
+
+        return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:120px;margin-bottom:12px;">
+            <line x1="${PAD}" y1="${H-PAD}" x2="${W-PAD}" y2="${H-PAD}" stroke="var(--border)" stroke-width="1"/>
+            <text x="${PAD-5}" y="${H-PAD+4}" fill="var(--muted)" font-size="10" text-anchor="end">${minS}</text>
+            <text x="${PAD-5}" y="${PAD+4}" fill="var(--muted)" font-size="10" text-anchor="end">${maxS}</text>
+            <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+            ${dots}
+        </svg>`;
     }
 
     // ============ COUNTDOWN + WAITLIST ============

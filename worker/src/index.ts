@@ -308,6 +308,18 @@ export default {
       const id = parseInt(path.split('/')[3]);
       return await getCuratedById(id, env);
     }
+    // GET /api/domain/:domain/history - Score history for a domain
+    if (path.match(/^\/api\/domain\/[^/]+\/history$/) && request.method === 'GET') {
+      const domain = path.split('/')[3];
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+      const rows = await env.DB.prepare(
+        `SELECT old_score, new_score, delta, old_tier, new_tier, base, brand,
+         similarity_bonus, feedback_bonus, reason, rescored_at
+         FROM score_history WHERE domain = ? ORDER BY rescored_at DESC LIMIT ?`
+      ).bind(domain, limit).all();
+      return json({ domain, history: rows.results || [] });
+    }
+
     if (path === '/api/threads' && request.method === 'GET') {
       return await listThreads(url, env);
     }
@@ -493,12 +505,16 @@ export default {
       const byTld = await env.DB.prepare(
         'SELECT tld, COUNT(*) as count, AVG(sale_price_usd) as avg_price FROM market_sales GROUP BY tld ORDER BY count DESC'
       ).all();
+      const recent = await env.DB.prepare(
+        'SELECT domain, tld, sale_price_usd, source_name, extracted_at FROM market_sales ORDER BY extracted_at DESC LIMIT 20'
+      ).all();
       return json({
         total_sales: totals?.total || 0,
         sum_price: Math.round(totals?.sum_price || 0),
         avg_price: Math.round(totals?.avg_price || 0),
         top_10: top10.results || [],
         by_tld: byTld.results || [],
+        recent_extractions: recent.results || [],
       });
     }
 
