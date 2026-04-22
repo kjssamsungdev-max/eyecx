@@ -1483,6 +1483,7 @@
         el.innerHTML = `
             <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">
                 <button class="btn btn-primary" style="padding:8px 16px;" id="fetch-rss-btn">Fetch now</button>
+                <button class="vote-btn" id="recategorize-btn">Recategorize all</button>
                 <select id="curated-filter" class="form-input" style="width:auto;padding:8px 12px;">
                     <option value="fresh" ${curatedFilter==='fresh'?'selected':''}>Fresh (30 days)</option>
                     <option value="7d" ${curatedFilter==='7d'?'selected':''}>Last 7 days</option>
@@ -1517,6 +1518,13 @@
             const d = await r.json();
             setTimeout(() => loadAdminCurated(), 1500);
             return `${d.inserted} new articles from ${d.fetched}/${d.sources} sources (${d.errors} errors)`;
+        });
+        document.getElementById('recategorize-btn').onclick = () => adminAction('recategorize-btn', 'fetch-rss-msg', 'Recategorizing', async () => {
+            const r = await apiFetch('/api/admin/curated/recategorize', { method: 'POST' });
+            const d = await r.json();
+            const dist = Object.entries(d.distribution || {}).map(([k,v]) => `${k}:${v}`).join(', ');
+            setTimeout(() => loadAdminCurated(), 1500);
+            return `${d.updated} articles recategorized (${dist})`;
         });
     }
 
@@ -2096,6 +2104,8 @@
     });
 
     // ============ BLOG ============
+    let blogCatFilter = 'all';
+
     async function loadBlog(path) {
         document.getElementById('view-blog').classList.add('active');
 
@@ -2123,7 +2133,7 @@
 
         const [artResp, curResp] = await Promise.all([
             fetch(`${API}/api/articles`),
-            fetch(`${API}/api/curated?limit=30`),
+            fetch(`${API}/api/curated?limit=30${blogCatFilter !== 'all' ? '&cat=' + blogCatFilter : ''}`),
         ]);
         const artData = await artResp.json();
         const curData = await curResp.json();
@@ -2137,19 +2147,28 @@
             </div>`).join('')
             : '<p style="color:var(--muted)">No articles yet.</p>';
 
-        document.getElementById('blog-curated').innerHTML = (curData.articles||[]).map(a => {
+        const catCounts = curData.category_counts || {};
+        const catPills = ['all','sale-report','market-analysis','deal-news','opinion','tutorial','uncategorized']
+            .filter(c => c === 'all' || (catCounts[c] || 0) > 0)
+            .map(c => `<button class="tag" style="cursor:pointer;${blogCatFilter===c?'background:var(--accent);color:#000;':''}" onclick="blogCatFilter='${c}';loadBlog('/blog');">${c === 'all' ? 'All' : c} ${c !== 'all' ? `(${catCounts[c]||0})` : ''}</button>`)
+            .join('');
+
+        document.getElementById('blog-curated').innerHTML = `<div style="margin-bottom:16px;display:flex;gap:6px;flex-wrap:wrap;">${catPills}</div>` +
+        ((curData.articles||[]).map(a => {
             const days = Math.floor((Date.now() - new Date(a.published_at).getTime()) / 86400000);
             const fc = days <= 7 ? 'var(--success)' : days <= 30 ? 'var(--gold)' : '#f87171';
+            const cats = (() => { try { return JSON.parse(a.categories || '[]'); } catch { return []; } })();
             return `<div class="card" style="cursor:pointer;" onclick="navigate('/blog/curated/${a.id}')">
                 <div class="card-title">${a.title}</div>
                 <div class="card-meta">
-                    <span>${a.source_name}</span><span>${a.category}</span>
+                    <span>${a.source_name}</span>
+                    ${cats.map(c => `<span class="tag">${c}</span>`).join('')}
                     <span style="color:${fc};font-weight:600;">${days}d ago</span>
                     <span>${a.views} views</span>
                 </div>
                 ${a.excerpt ? `<p style="color:var(--muted);margin-top:8px;font-size:0.9rem;">${a.excerpt.slice(0,200)}...</p>` : ''}
             </div>`;
-        }).join('') || '<p style="color:var(--muted)">No curated content yet.</p>';
+        }).join('') || '<p style="color:var(--muted)">No curated content yet.</p>');
     }
 
     async function loadCuratedDetail(id) {

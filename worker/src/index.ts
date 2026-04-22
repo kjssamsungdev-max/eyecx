@@ -489,6 +489,29 @@ export default {
       return json({ ok: true, updated });
     }
 
+    // POST /api/admin/curated/recategorize - Classify curated content (batched)
+    if (path === '/api/admin/curated/recategorize' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      // Process only rows without categories (or with empty [])
+      const rows = await env.DB.prepare(
+        "SELECT id, title, excerpt FROM curated_content WHERE categories IS NULL OR categories = '[]' LIMIT 300"
+      ).all<{ id: number; title: string; excerpt: string }>();
+      let updated = 0;
+      const dist: Record<string, number> = {};
+      for (const row of (rows.results || [])) {
+        const cats = classifyContent(row.title, row.excerpt);
+        await env.DB.prepare('UPDATE curated_content SET categories = ? WHERE id = ?')
+          .bind(JSON.stringify(cats), row.id).run();
+        updated++;
+        for (const c of cats) dist[c] = (dist[c] || 0) + 1;
+      }
+      const remaining = await env.DB.prepare(
+        "SELECT COUNT(*) as c FROM curated_content WHERE categories IS NULL OR categories = '[]'"
+      ).first<{ c: number }>();
+      return json({ ok: true, updated, remaining: remaining?.c || 0, distribution: dist });
+    }
+
     // POST /api/admin/rescore - Reweighted domain scoring
     if (path === '/api/admin/rescore' && request.method === 'POST') {
       const [user, err] = await requireAdmin(request, env);
@@ -1663,19 +1686,37 @@ async function listCurated(url: URL, env: Env): Promise<Response> {
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '30'), 50);
   const offset = parseInt(url.searchParams.get('offset') || '0');
   const all = url.searchParams.get('all') === '1';
+  const catFilter = url.searchParams.get('cat');
 
   let where = "status = 'published' AND hidden = 0";
   if (!all) {
     where += " AND published_at > datetime('now', '-30 days')";
   }
+  if (catFilter && catFilter !== 'all') {
+    where += ` AND categories LIKE '%"${catFilter}"%'`;
+  }
 
   const result = await env.DB.prepare(
     `SELECT id, source_name, title, url, excerpt, author, published_at, category, tags,
-     quality_score, views, featured FROM curated_content WHERE ${where}
+     quality_score, views, featured, categories FROM curated_content WHERE ${where}
      ORDER BY quality_score DESC, published_at DESC LIMIT ? OFFSET ?`
   ).bind(limit, offset).all();
 
-  return json({ articles: result.results || [], count: result.results?.length || 0 });
+  // Category counts for filter pills
+  const counts = await env.DB.prepare(
+    `SELECT categories FROM curated_content WHERE status = 'published' AND hidden = 0
+     ${!all ? "AND published_at > datetime('now', '-30 days')" : ''}`
+  ).all<{ categories: string }>();
+
+  const catCounts: Record<string, number> = {};
+  for (const row of (counts.results || [])) {
+    try {
+      const cats = JSON.parse(row.categories || '[]');
+      for (const c of cats) catCounts[c] = (catCounts[c] || 0) + 1;
+    } catch {}
+  }
+
+  return json({ articles: result.results || [], count: result.results?.length || 0, category_counts: catCounts });
 }
 
 // ============ CURATED DETAIL ============
@@ -2098,14 +2139,16 @@ async function fetchAndCurateFeed(source: CurationSource, env: Env): Promise<{ i
     const tags = extractTags(item.title + ' ' + excerpt);
     const qScore = computeQualityScore(item.title, excerpt, pubDate, source.category, source.name);
 
+    const categories = classifyContent(item.title, excerpt);
+
     await env.DB.prepare(
       `INSERT INTO curated_content (source_id, source_name, title, url, excerpt, author,
-       published_at, category, tags, slug, quality_score, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')`
+       published_at, category, tags, slug, quality_score, status, categories)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?)`
     ).bind(
       source.id, source.name, item.title, item.url, excerpt,
       item.author || '', pubDate,
-      source.category, JSON.stringify(tags), slug, qScore
+      source.category, JSON.stringify(tags), slug, qScore, JSON.stringify(categories)
     ).run();
     inserted++;
   }
@@ -2688,6 +2731,29 @@ async function runSalesExtraction(env: Env): Promise<{ processed: number; extrac
   }
 
   return { processed, extracted, errors };
+}
+
+// ============ CONTENT CLASSIFIER ============
+
+const CATEGORY_RULES: Array<{ cat: string; patterns: RegExp }> = [
+  { cat: 'sale-report', patterns: /\$[\d,]+|sold\s+for|sold\s+at|sale\s+price|domain\s+sale|six.figure|seven.figure|million\s+dollar/i },
+  { cat: 'market-analysis', patterns: /report|analysis|analysi[sz]|chart|trend|forecast|market\s+data|statistics|year.in.review|landscape/i },
+  { cat: 'deal-news', patterns: /acquisition|acquired|merger|partnership|investment|funding|raised|series\s+[a-c]/i },
+  { cat: 'opinion', patterns: /\bwhy\b|should|thoughts\s+on|opinion|editorial|commentary|unpopular|controversial|debate/i },
+  { cat: 'tutorial', patterns: /how\s+to|guide|tutorial|step.by.step|beginner|getting\s+started|walkthrough|checklist/i },
+];
+
+function classifyContent(title: string, excerpt: string): string[] {
+  if (!title) return ['uncategorized'];
+
+  const text = (title + ' ' + (excerpt || '')).toLowerCase();
+  const cats: string[] = [];
+
+  for (const rule of CATEGORY_RULES) {
+    if (rule.patterns.test(text)) cats.push(rule.cat);
+  }
+
+  return cats.length > 0 ? cats : ['uncategorized'];
 }
 
 // ============ QUALITY SCORING ============
