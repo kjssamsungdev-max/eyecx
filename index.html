@@ -1363,6 +1363,27 @@
         } catch { msg.textContent = 'Network error'; msg.className = 'form-msg error'; }
     });
 
+    // ============ ADMIN BUTTON HELPER ============
+    async function adminAction(btnId, msgId, label, asyncFn) {
+        const btn = document.getElementById(btnId);
+        const msg = document.getElementById(msgId);
+        if (!btn) return;
+        const origText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = label + '...';
+        btn.style.opacity = '0.6';
+        if (msg) { msg.textContent = label + '...'; msg.style.color = 'var(--muted)'; }
+        try {
+            const result = await asyncFn();
+            if (msg) { msg.innerHTML = result; msg.style.color = 'var(--success)'; }
+        } catch (e) {
+            if (msg) { msg.innerHTML = `<span style="color:#f87171">Failed: ${e}</span>`; }
+        }
+        btn.textContent = origText;
+        btn.disabled = false;
+        btn.style.opacity = '';
+    }
+
     // ============ ADMIN ============
     async function loadAdmin() {
         const user = await checkAuth();
@@ -1491,19 +1512,12 @@
             loadAdminCurated();
         };
 
-        document.getElementById('fetch-rss-btn').onclick = async () => {
-            const msg = document.getElementById('fetch-rss-msg');
-            const btn = document.getElementById('fetch-rss-btn');
-            btn.disabled = true; msg.textContent = 'Fetching feeds...';
-            try {
-                const r = await apiFetch('/api/admin/curation/run', { method: 'POST' });
-                const d = await r.json();
-                msg.textContent = `Done: ${d.inserted} new from ${d.fetched}/${d.sources} sources`;
-                msg.style.color = 'var(--success)';
-                setTimeout(() => loadAdminCurated(), 1500);
-            } catch { msg.textContent = 'Failed'; msg.style.color = '#f87171'; }
-            btn.disabled = false;
-        };
+        document.getElementById('fetch-rss-btn').onclick = () => adminAction('fetch-rss-btn', 'fetch-rss-msg', 'Fetching feeds', async () => {
+            const r = await apiFetch('/api/admin/curation/run', { method: 'POST' });
+            const d = await r.json();
+            setTimeout(() => loadAdminCurated(), 1500);
+            return `${d.inserted} new articles from ${d.fetched}/${d.sources} sources (${d.errors} errors)`;
+        });
     }
 
     async function hideCurated(id) {
@@ -1554,19 +1568,12 @@
                 </tr>`).join('')}
             </table>` : ''}`;
 
-        document.getElementById('extract-sales-btn').onclick = async () => {
-            const msg = document.getElementById('extract-sales-msg');
-            const btn = document.getElementById('extract-sales-btn');
-            btn.disabled = true; msg.textContent = 'Extracting...';
-            try {
-                const r = await apiFetch('/api/admin/sales/extract', { method: 'POST' });
-                const d = await r.json();
-                msg.textContent = `Done: ${d.extracted} sales from ${d.processed} articles`;
-                msg.style.color = 'var(--success)';
-                setTimeout(() => loadAdminSales(), 1500);
-            } catch { msg.textContent = 'Failed'; msg.style.color = '#f87171'; }
-            btn.disabled = false;
-        };
+        document.getElementById('extract-sales-btn').onclick = () => adminAction('extract-sales-btn', 'extract-sales-msg', 'Extracting sales', async () => {
+            const r = await apiFetch('/api/admin/sales/extract', { method: 'POST' });
+            const d = await r.json();
+            setTimeout(() => loadAdminSales(), 1500);
+            return `${d.extracted} sales from ${d.processed} articles (${d.errors} errors)`;
+        });
     }
 
     // ============ ADMIN MOVERS TAB ============
@@ -1672,15 +1679,12 @@
                 ${c.reason ? `<div style="color:var(--muted);font-size:0.75rem;">${c.reason}</div>` : ''}
             </div>`).join('') : '<p style="color:var(--muted)">No weight changes yet. Click "Tune now" to analyze market data.</p>'}`;
 
-        document.getElementById('tune-now-btn').onclick = async () => {
-            const msg = document.getElementById('tune-msg');
-            msg.textContent = 'Tuning...';
+        document.getElementById('tune-now-btn').onclick = () => adminAction('tune-now-btn', 'tune-msg', 'Tuning weights', async () => {
             const r = await apiFetch('/api/admin/scoring/tune', { method: 'POST' });
             const d = await r.json();
-            msg.innerHTML = `Done: ${d.tlds_processed} TLDs, ${d.changes} changes, ${d.tlds_skipped} skipped (insufficient data)`;
-            msg.style.color = d.changes > 0 ? 'var(--success)' : 'var(--muted)';
             if (d.changes > 0) setTimeout(() => loadAdminTuning(), 1500);
-        };
+            return `${d.tlds_processed} TLDs processed, ${d.changes} weight changes, ${d.tlds_skipped} skipped`;
+        });
 
         document.getElementById('reset-weights-btn').onclick = async () => {
             if (!confirm('Reset all per-TLD weight overrides to defaults?')) return;
@@ -1757,28 +1761,23 @@
                 </div>
             </div>`).join('')}` : ''}`;
 
-        document.getElementById('check-health-btn').onclick = async () => {
-            const msg = document.getElementById('sources-msg');
-            msg.textContent = 'Checking...';
+        document.getElementById('check-health-btn').onclick = () => adminAction('check-health-btn', 'sources-msg', 'Checking health', async () => {
             const r = await apiFetch('/api/admin/sources/check-health', { method: 'POST' });
             const d = await r.json();
-            msg.innerHTML = `<span style="color:var(--success)">Health: ${d.healthy} healthy, ${d.stale} stale, ${d.dead} dead</span>`;
             setTimeout(() => loadAdminSources(), 1500);
-        };
-        document.getElementById('discover-btn').onclick = async () => {
-            const msg = document.getElementById('sources-msg');
-            msg.textContent = 'Discovering...';
+            return `${d.healthy} healthy, ${d.stale} stale, ${d.dead} dead, ${d.disabled} disabled`;
+        });
+        document.getElementById('discover-btn').onclick = () => adminAction('discover-btn', 'sources-msg', 'Discovering sources', async () => {
             const r = await apiFetch('/api/admin/sources/discover', { method: 'POST' });
             const d = await r.json();
-            msg.innerHTML = `Scanned ${d.scanned} sites, found ${d.candidates} new candidates`;
             if (d.candidates > 0) setTimeout(() => loadAdminSources(), 1500);
-        };
-        document.getElementById('check-alerts-btn').onclick = async () => {
-            const msg = document.getElementById('sources-msg');
+            return `Scanned ${d.scanned} sites, found ${d.candidates} new candidates`;
+        });
+        document.getElementById('check-alerts-btn').onclick = () => adminAction('check-alerts-btn', 'sources-msg', 'Checking alerts', async () => {
             const r = await apiFetch('/api/admin/alerts/check', { method: 'POST' });
             const d = await r.json();
-            msg.textContent = `Alert check: ${d.alerts_created} new alerts`;
-        };
+            return `${d.alerts_created} new alert(s) created`;
+        });
     }
 
     async function enableSource(id) {
@@ -1924,45 +1923,30 @@
         </table>`;
 
         // Scan control handlers
-        document.getElementById('run-scan-btn').onclick = async () => {
-            const btn = document.getElementById('run-scan-btn');
-            const info = document.getElementById('scan-info');
-            btn.disabled = true; info.textContent = 'Triggering scan...';
-            try {
-                const r = await apiFetch('/api/admin/scan/trigger', { method: 'POST' });
-                const d = await r.json();
-                if (d.ok) {
-                    info.innerHTML = `<span style="color:var(--success)">Scan triggered (HTTP ${d.github_status})</span>`;
-                    window.open('https://github.com/kjssamsungdev-max/eyecx/actions/workflows/daily-scan.yml', '_blank');
-                } else {
-                    info.innerHTML = `<span style="color:#f87171">${d.error} (HTTP ${d.github_status})</span>`;
-                    if (d.github_body) info.innerHTML += `<br><code style="font-size:0.8rem;color:var(--muted);">${d.github_body.slice(0,200)}</code>`;
-                }
-            } catch (e) { info.innerHTML = `<span style="color:#f87171">Network error: ${e}</span>`; }
-            btn.disabled = false;
-        };
+        document.getElementById('run-scan-btn').onclick = () => adminAction('run-scan-btn', 'scan-info', 'Triggering scan', async () => {
+            const r = await apiFetch('/api/admin/scan/trigger', { method: 'POST' });
+            const d = await r.json();
+            if (d.ok) {
+                window.open('https://github.com/kjssamsungdev-max/eyecx/actions/workflows/daily-scan.yml', '_blank');
+                return `Scan triggered (HTTP ${d.github_status})`;
+            }
+            throw `${d.error} (HTTP ${d.github_status})${d.github_body ? ' — ' + d.github_body.slice(0,100) : ''}`;
+        });
 
-        document.getElementById('scan-diagnose-btn').onclick = async () => {
+        document.getElementById('scan-diagnose-btn').onclick = () => adminAction('scan-diagnose-btn', 'scan-info', 'Diagnosing', async () => {
             const r = await apiFetch('/api/admin/scan/diagnose');
             const d = await r.json();
-            const info = document.getElementById('scan-info');
-            info.innerHTML = Object.entries(d).map(([k,v]) =>
+            return Object.entries(d).map(([k,v]) =>
                 `<span style="color:${v === true ? 'var(--success)' : v === false ? '#f87171' : 'var(--muted)'}">${k}: ${v}</span>`
             ).join(' | ');
-        };
+        });
 
-        document.getElementById('verify-batch-btn').onclick = async () => {
-            const btn = document.getElementById('verify-batch-btn');
-            const info = document.getElementById('scan-info');
-            btn.disabled = true; info.textContent = 'Verifying via RDAP (up to 100 domains)...';
-            try {
-                const r = await apiFetch('/api/admin/domains/verify-batch', { method: 'POST' });
-                const d = await r.json();
-                info.innerHTML = `<span style="color:var(--success)">Verified: ${d.checked} checked, ${d.available} available, ${d.registered} registered</span>`;
-                setTimeout(() => loadAdminDomains(), 1500);
-            } catch { info.innerHTML = '<span style="color:#f87171">Verification failed</span>'; }
-            btn.disabled = false;
-        };
+        document.getElementById('verify-batch-btn').onclick = () => adminAction('verify-batch-btn', 'scan-info', 'Verifying RDAP', async () => {
+            const r = await apiFetch('/api/admin/domains/verify-batch', { method: 'POST' });
+            const d = await r.json();
+            setTimeout(() => loadAdminDomains(), 1500);
+            return `${d.checked} checked: ${d.available} available, ${d.registered} registered`;
+        });
 
         document.getElementById('scan-history-btn').onclick = async () => {
             const modal = document.getElementById('scan-history-modal');
