@@ -1,0 +1,72 @@
+name: EyeCX Bulk Job
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Bulk job ID from D1'
+        required: true
+      task_type:
+        description: 'Task type'
+        required: true
+        type: choice
+        options:
+          - rdap_reverify
+          - rescore
+          - sales_reextract
+          - qa_audit
+          - asset_audit
+      params:
+        description: 'Optional JSON params'
+        required: false
+        default: ''
+
+env:
+  EYECX_API_URL: https://eyecx-api.kjssamsungdev.workers.dev
+  EYECX_API_SECRET: ${{ secrets.EYECX_API_SECRET }}
+  JOB_ID: ${{ github.event.inputs.job_id }}
+  ADMIN_EMAIL: admin@eyecx.com
+  ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+
+jobs:
+  run-task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run bulk task
+        run: |
+          TASK="${{ github.event.inputs.task_type }}"
+          echo "Running bulk task: $TASK (job_id: $JOB_ID)"
+
+          case "$TASK" in
+            rdap_reverify)    python scripts/bulk/rdap_reverify.py ;;
+            rescore)          python scripts/bulk/rescore.py ;;
+            sales_reextract)  python scripts/bulk/sales_reextract.py ;;
+            qa_audit)         python scripts/bulk/qa_audit.py ;;
+            asset_audit)      python scripts/bulk/asset_audit.py ;;
+            *)
+              echo "Unknown task: $TASK"
+              curl -s -X POST "$EYECX_API_URL/api/admin/jobs/$JOB_ID/complete" \
+                -H "Authorization: Bearer $EYECX_API_SECRET" \
+                -H "Content-Type: application/json" \
+                -d "{\"status\":\"failed\",\"summary\":\"Unknown task type: $TASK\"}"
+              exit 1
+              ;;
+          esac
+
+      - name: Report failure
+        if: failure()
+        run: |
+          curl -s -X POST "$EYECX_API_URL/api/admin/jobs/$JOB_ID/complete" \
+            -H "Authorization: Bearer $EYECX_API_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"status":"failed","summary":"GitHub Actions job failed — check logs"}'

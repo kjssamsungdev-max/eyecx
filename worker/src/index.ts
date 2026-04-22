@@ -774,6 +774,100 @@ export default {
       return json({ ok: true, id, rejected: true });
     }
 
+    // ============ BULK JOBS ============
+
+    // POST /api/admin/jobs/run - Create and dispatch a bulk job
+    if (path === '/api/admin/jobs/run' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const { task_type, params } = await request.json() as { task_type: string; params?: string };
+      const validTypes = ['rdap_reverify', 'rescore', 'sales_reextract', 'qa_audit', 'asset_audit'];
+      if (!validTypes.includes(task_type)) return error(`Invalid task_type. Valid: ${validTypes.join(', ')}`);
+
+      // Check max 2 concurrent
+      const running = await env.DB.prepare(
+        "SELECT COUNT(*) as c FROM bulk_jobs WHERE status IN ('queued','running')"
+      ).first<{ c: number }>();
+      if ((running?.c || 0) >= 2) return error('Max 2 concurrent jobs. Wait for current jobs to finish.', 429);
+
+      // Insert job
+      const result = await env.DB.prepare(
+        'INSERT INTO bulk_jobs (task_type, params, created_by) VALUES (?, ?, ?)'
+      ).bind(task_type, params || null, user!.id).run();
+      const jobId = result.meta.last_row_id;
+
+      // Dispatch GitHub Actions
+      let ghRunId = '';
+      if (env.GITHUB_TOKEN) {
+        try {
+          const resp = await fetch(
+            'https://api.github.com/repos/kjssamsungdev-max/eyecx/actions/workflows/eyecx-bulk.yml/dispatches',
+            {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${env.GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'EyeCX-Worker' },
+              body: JSON.stringify({ ref: 'main', inputs: { job_id: String(jobId), task_type, params: params || '' } }),
+            }
+          );
+          if (resp.status === 204) {
+            await env.DB.prepare("UPDATE bulk_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?").bind(jobId).run();
+          } else {
+            const body = await resp.text();
+            await env.DB.prepare("UPDATE bulk_jobs SET status = 'failed', result_summary = ? WHERE id = ?")
+              .bind(`GH dispatch failed: ${resp.status} ${body.slice(0, 200)}`, jobId).run();
+          }
+        } catch (e) {
+          await env.DB.prepare("UPDATE bulk_jobs SET status = 'failed', result_summary = ? WHERE id = ?")
+            .bind(`Dispatch error: ${e}`, jobId).run();
+        }
+      } else {
+        await env.DB.prepare("UPDATE bulk_jobs SET status = 'failed', result_summary = 'GITHUB_TOKEN not set' WHERE id = ?").bind(jobId).run();
+      }
+
+      return json({ job_id: jobId, task_type, status: 'dispatched' });
+    }
+
+    // GET /api/admin/jobs - List recent jobs
+    if (path === '/api/admin/jobs' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const rows = await env.DB.prepare('SELECT * FROM bulk_jobs ORDER BY created_at DESC LIMIT 50').all();
+      return json({ jobs: rows.results || [] });
+    }
+
+    // GET /api/admin/jobs/:id - Job detail
+    if (path.match(/^\/api\/admin\/jobs\/\d+$/) && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[4]);
+      const job = await env.DB.prepare('SELECT * FROM bulk_jobs WHERE id = ?').bind(id).first();
+      if (!job) return error('Job not found', 404);
+      return json(job);
+    }
+
+    // POST /api/admin/jobs/:id/complete - Callback from GH Actions
+    if (path.match(/^\/api\/admin\/jobs\/\d+\/complete$/) && request.method === 'POST') {
+      // Accept admin session OR Bearer API_SECRET
+      const sessionUser = await authenticateSession(request, env);
+      const bearerOk = authenticate(request, env);
+      if (!sessionUser && !bearerOk) return error('Auth required', 401);
+
+      const id = parseInt(path.split('/')[4]);
+      const { status, summary } = await request.json() as { status: string; summary: string };
+      await env.DB.prepare(
+        "UPDATE bulk_jobs SET status = ?, result_summary = ?, completed_at = datetime('now') WHERE id = ?"
+      ).bind(status === 'success' ? 'success' : 'failed', (summary || '').slice(0, 2000), id).run();
+      return json({ ok: true, id, status });
+    }
+
+    // POST /api/admin/jobs/:id/cancel - Cancel a running job
+    if (path.match(/^\/api\/admin\/jobs\/\d+\/cancel$/) && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[4]);
+      await env.DB.prepare("UPDATE bulk_jobs SET status = 'failed', result_summary = 'Cancelled by admin', completed_at = datetime('now') WHERE id = ?").bind(id).run();
+      return json({ ok: true, id, cancelled: true });
+    }
+
     // GET /api/admin/content-stats - Aggregated content dashboard stats
     if (path === '/api/admin/content-stats' && request.method === 'GET') {
       const [user, err] = await requireAdmin(request, env);

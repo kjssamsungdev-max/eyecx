@@ -1118,6 +1118,7 @@
                 <button data-tab="admin-sales">Sales Intel</button>
                 <button data-tab="admin-movers">Movers</button>
                 <button data-tab="admin-tuning">Tuning</button>
+                <button data-tab="admin-jobs">Jobs</button>
                 <button data-tab="admin-cstats">Content Stats</button>
                 <button data-tab="admin-sources">Sources</button>
                 <button data-tab="admin-threads">Threads</button>
@@ -1128,6 +1129,7 @@
             <div id="admin-sales" style="display:none;"></div>
             <div id="admin-movers" style="display:none;"></div>
             <div id="admin-tuning" style="display:none;"></div>
+            <div id="admin-jobs" style="display:none;"></div>
             <div id="admin-cstats" style="display:none;"></div>
             <div id="admin-sources" style="display:none;"></div>
             <div id="admin-threads" style="display:none;"></div>
@@ -1415,7 +1417,7 @@
                 }">${fbMap[s]||0}</div><div class="lbl">${s}</div></div>`).join('');
 
         // Tab switching
-        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-cstats','admin-sources','admin-threads','admin-users','admin-content','admin-waitlist'];
+        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-jobs','admin-cstats','admin-sources','admin-threads','admin-users','admin-content','admin-waitlist'];
         document.querySelectorAll('#admin-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
@@ -1453,6 +1455,7 @@
         await loadAdminSales();
         await loadAdminMovers();
         await loadAdminTuning();
+        await loadAdminJobs();
         await loadAdminContentStats();
         await loadAdminSources();
         await loadAdminAlertBanner();
@@ -1706,6 +1709,63 @@
             await apiFetch('/api/admin/scoring/reset', { method: 'POST' });
             loadAdminTuning();
         };
+    }
+
+    // ============ ADMIN JOBS TAB ============
+    const TASK_TYPES = ['rdap_reverify', 'rescore', 'sales_reextract', 'qa_audit', 'asset_audit'];
+    const TASK_LABELS = { rdap_reverify: 'RDAP Re-verify', rescore: 'Rescore All', sales_reextract: 'Sales Re-extract', qa_audit: 'QA Audit', asset_audit: 'Asset Audit' };
+
+    async function loadAdminJobs() {
+        const el = document.getElementById('admin-jobs');
+        el.innerHTML = '<p style="color:var(--muted)">Loading jobs...</p>';
+
+        const resp = await apiFetch('/api/admin/jobs');
+        const data = await resp.json();
+        const jobs = data.jobs || [];
+
+        const statusColor = { queued: 'var(--gold)', running: 'var(--accent)', success: 'var(--success)', failed: '#f87171' };
+        const buttons = TASK_TYPES.map(t =>
+            `<button class="vote-btn" onclick="runBulkJob('${t}')" id="job-btn-${t}">${TASK_LABELS[t]}</button>`
+        ).join('');
+
+        el.innerHTML = `
+            <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+                ${buttons}
+                <span id="job-msg" style="color:var(--muted);font-size:0.9rem;"></span>
+            </div>
+            <p style="color:var(--muted);font-size:0.85rem;margin-bottom:16px;">Max 2 concurrent jobs. Results posted back from GitHub Actions on completion.</p>
+            ${jobs.length ? `<table class="data-table" style="font-size:0.85rem;">
+                <tr><th>ID</th><th>Task</th><th>Status</th><th>Created</th><th>Duration</th><th>Summary</th><th></th></tr>
+                ${jobs.map(j => {
+                    const dur = j.completed_at && j.started_at
+                        ? Math.round((new Date(j.completed_at) - new Date(j.started_at)) / 1000) + 's'
+                        : j.started_at ? 'running...' : '-';
+                    return `<tr>
+                        <td>${j.id}</td>
+                        <td>${TASK_LABELS[j.task_type] || j.task_type}</td>
+                        <td><span style="color:${statusColor[j.status]||'var(--muted)'};font-weight:600;">${j.status}</span></td>
+                        <td>${j.created_at?.slice(0,16) || ''}</td>
+                        <td>${dur}</td>
+                        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(j.result_summary||'').replace(/"/g,'&quot;')}">${(j.result_summary || '-').slice(0, 80)}</td>
+                        <td>${j.status === 'running' ? `<button class="vote-btn" onclick="cancelJob(${j.id})">Cancel</button>` : ''}</td>
+                    </tr>`;
+                }).join('')}
+            </table>` : '<p style="color:var(--muted)">No jobs yet. Click a task button above to run one.</p>'}`;
+    }
+
+    async function runBulkJob(taskType) {
+        await adminAction(`job-btn-${taskType}`, 'job-msg', `Running ${TASK_LABELS[taskType]}`, async () => {
+            const r = await apiFetch('/api/admin/jobs/run', { method: 'POST', body: JSON.stringify({ task_type: taskType }) });
+            const d = await r.json();
+            if (d.error) throw d.error;
+            setTimeout(() => loadAdminJobs(), 2000);
+            return `Job #${d.job_id} dispatched (${taskType})`;
+        });
+    }
+
+    async function cancelJob(id) {
+        await apiFetch(`/api/admin/jobs/${id}/cancel`, { method: 'POST' });
+        loadAdminJobs();
     }
 
     // ============ ADMIN CONTENT STATS TAB ============

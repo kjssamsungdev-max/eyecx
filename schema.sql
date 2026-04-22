@@ -183,6 +183,21 @@ CREATE TABLE IF NOT EXISTS source_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_candidates_status ON source_candidates(status);
 
+-- Bulk job queue
+CREATE TABLE IF NOT EXISTS bulk_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    params TEXT,
+    result_summary TEXT,
+    gh_run_id TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    started_at TEXT,
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON bulk_jobs(status);
+
 -- Ingest rejection audit log
 CREATE TABLE IF NOT EXISTS ingest_rejections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
