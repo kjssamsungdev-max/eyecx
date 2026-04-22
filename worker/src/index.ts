@@ -662,6 +662,19 @@ export default {
     }
 
     // GET /api/admin/alerts - Active alerts
+    // GET /api/admin/rejections - Recent ingest rejections
+    if (path === '/api/admin/rejections' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const rows = await env.DB.prepare(
+        'SELECT table_name, domain_or_key, reason, payload_snippet, rejected_at FROM ingest_rejections ORDER BY rejected_at DESC LIMIT 50'
+      ).all();
+      const counts = await env.DB.prepare(
+        'SELECT table_name, COUNT(*) as c FROM ingest_rejections GROUP BY table_name'
+      ).all();
+      return json({ rejections: rows.results || [], counts: counts.results || [] });
+    }
+
     if (path === '/api/admin/alerts' && request.method === 'GET') {
       const [user, err] = await requireAdmin(request, env);
       if (err) return err;
@@ -907,8 +920,13 @@ export default {
         if (rows.length > 1000) return error('Max 1000 per batch');
 
         let inserted = 0;
+        let rejected = 0;
         for (const r of rows) {
-          if (!r.domain || !r.tld) continue;
+          const score = r.potential_score || 0;
+          const tier = r.tier || 'lead';
+          const status = r.availability_status || 'unknown';
+          const dGate = gateDomain(r.domain, score, tier, status);
+          if (!dGate.ok) { await logRejection(env, 'domains', r.domain, dGate.reason); rejected++; continue; }
           try {
             await env.DB.prepare(
               `INSERT OR REPLACE INTO domains (domain, tld, potential_score, tier, estimated_flip_value,
@@ -916,16 +934,16 @@ export default {
                availability_status, source, first_seen, brand_score)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).bind(
-              r.domain, r.tld, r.potential_score || 0, r.tier || 'lead', r.estimated_flip_value || 0,
+              r.domain, r.tld, score, tier, r.estimated_flip_value || 0,
               r.page_rank || null, r.wayback_snapshots || 0, r.estimated_age_years || null,
               r.backlinks || 0, r.majestic_rank || null, r.tranco_rank || null,
-              r.availability_status || 'unknown', r.source || 'czds_dropped',
+              status, r.source || 'czds_dropped',
               r.first_seen || new Date().toISOString(), r.brand_score || 0
             ).run();
             inserted++;
           } catch {}
         }
-        return json({ ok: true, inserted, total: rows.length });
+        return json({ ok: true, inserted, rejected, total: rows.length });
       }
 
       // GET /api/domain/:domain
@@ -2066,9 +2084,18 @@ async function fetchAndCurateFeed(source: CurationSource, env: Env): Promise<{ i
 
     const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 100);
     const excerpt = (item.description || '').slice(0, 500);
-    const tags = extractTags(item.title + ' ' + excerpt);
-
     const pubDate = item.pubDate || new Date().toISOString();
+
+    const cGate = gateCurated(item.title, item.url, pubDate, slug);
+    if (!cGate.ok) { await logRejection(env, 'curated_content', item.url, cGate.reason, item.title?.slice(0, 100)); skipped++; continue; }
+
+    // Dedupe by source+title within 7 days
+    const dupTitle = await env.DB.prepare(
+      "SELECT id FROM curated_content WHERE source_id = ? AND title = ? AND curated_at > datetime('now', '-7 days')"
+    ).bind(source.id, item.title).first();
+    if (dupTitle) { skipped++; continue; }
+
+    const tags = extractTags(item.title + ' ' + excerpt);
     const qScore = computeQualityScore(item.title, excerpt, pubDate, source.category, source.name);
 
     await env.DB.prepare(
@@ -2553,6 +2580,49 @@ async function runDomainRescore(env: Env): Promise<{
   };
 }
 
+// ============ INGEST GATES ============
+
+const VALID_TIERS = new Set(['diamond', 'gold', 'silver', 'bronze', 'lead']);
+const FQDN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?\.[a-z]{2,}$/;
+const URL_RE = /^https?:\/\/.+/;
+
+type GateResult = { ok: true } | { ok: false; reason: string };
+
+function gateSale(domain: string, price: number, sourceUrl: string, saleDate?: string): GateResult {
+  if (!domain || !FQDN_RE.test(domain)) return { ok: false, reason: `invalid FQDN: ${domain}` };
+  if (typeof price !== 'number' || price < 50 || price > 10_000_000) return { ok: false, reason: `price out of range: ${price}` };
+  if (sourceUrl && !URL_RE.test(sourceUrl)) return { ok: false, reason: `invalid source URL` };
+  if (saleDate && new Date(saleDate).getTime() > Date.now() + 86400000) return { ok: false, reason: `sale date in future` };
+  return { ok: true };
+}
+
+function gateCurated(title: string, url: string, publishedAt: string, slug: string): GateResult {
+  if (!title || title.length < 10 || title.length > 300) return { ok: false, reason: `title length ${title?.length || 0} outside 10-300` };
+  if (!url || !URL_RE.test(url)) return { ok: false, reason: `invalid URL` };
+  if (publishedAt) {
+    const ts = new Date(publishedAt).getTime();
+    if (ts > Date.now() + 86400000) return { ok: false, reason: `published_at in future` };
+    if (ts < Date.now() - 10 * 365.25 * 86400000) return { ok: false, reason: `published_at older than 10 years` };
+  }
+  return { ok: true };
+}
+
+function gateDomain(domain: string, score: number, tier: string, status: string): GateResult {
+  if (!domain || !domain.includes('.')) return { ok: false, reason: `invalid domain: ${domain}` };
+  if (typeof score !== 'number' || score < 0 || score > 100) return { ok: false, reason: `score out of range: ${score}` };
+  if (!VALID_TIERS.has(tier)) return { ok: false, reason: `invalid tier: ${tier}` };
+  if (!status || status === '') return { ok: false, reason: `empty availability_status` };
+  return { ok: true };
+}
+
+async function logRejection(env: Env, tableName: string, key: string, reason: string, snippet?: string): Promise<void> {
+  try {
+    await env.DB.prepare(
+      'INSERT INTO ingest_rejections (table_name, domain_or_key, reason, payload_snippet) VALUES (?, ?, ?, ?)'
+    ).bind(tableName, key, reason, (snippet || '').slice(0, 200)).run();
+  } catch {}
+}
+
 // ============ SALES EXTRACTION ============
 
 const SALE_SOURCES = new Set(['DNJournal', 'NamePros', 'DomainInvesting', 'DomainNameWire', 'Domain Name Wire', 'Sedo']);
@@ -2596,6 +2666,8 @@ async function runSalesExtraction(env: Env): Promise<{ processed: number; extrac
 
       for (const sale of sales) {
         const tld = '.' + sale.domain.split('.').pop();
+        const gate = gateSale(sale.domain, sale.price, row.url);
+        if (!gate.ok) { await logRejection(env, 'market_sales', sale.domain, gate.reason, `$${sale.price}`); continue; }
         try {
           await env.DB.prepare(
             `INSERT OR IGNORE INTO market_sales (domain, tld, sale_price_usd, source_url, source_name)

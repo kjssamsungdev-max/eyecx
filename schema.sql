@@ -182,3 +182,14 @@ CREATE TABLE IF NOT EXISTS source_candidates (
     reviewed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_candidates_status ON source_candidates(status);
+
+-- Ingest rejection audit log
+CREATE TABLE IF NOT EXISTS ingest_rejections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_name TEXT NOT NULL,
+    domain_or_key TEXT,
+    reason TEXT NOT NULL,
+    payload_snippet TEXT,
+    rejected_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rejections_date ON ingest_rejections(rejected_at DESC);
