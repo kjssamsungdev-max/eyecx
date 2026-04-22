@@ -1118,6 +1118,7 @@
                 <button data-tab="admin-sales">Sales Intel</button>
                 <button data-tab="admin-movers">Movers</button>
                 <button data-tab="admin-tuning">Tuning</button>
+                <button data-tab="admin-cstats">Content Stats</button>
                 <button data-tab="admin-sources">Sources</button>
                 <button data-tab="admin-threads">Threads</button>
                 <button data-tab="admin-waitlist">Waitlist</button>
@@ -1127,6 +1128,7 @@
             <div id="admin-sales" style="display:none;"></div>
             <div id="admin-movers" style="display:none;"></div>
             <div id="admin-tuning" style="display:none;"></div>
+            <div id="admin-cstats" style="display:none;"></div>
             <div id="admin-sources" style="display:none;"></div>
             <div id="admin-threads" style="display:none;"></div>
             <div id="admin-users" style="display:none;"></div>
@@ -1409,7 +1411,7 @@
                 }">${fbMap[s]||0}</div><div class="lbl">${s}</div></div>`).join('');
 
         // Tab switching
-        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-sources','admin-threads','admin-users','admin-content','admin-waitlist'];
+        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-cstats','admin-sources','admin-threads','admin-users','admin-content','admin-waitlist'];
         document.querySelectorAll('#admin-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
@@ -1447,6 +1449,7 @@
         await loadAdminSales();
         await loadAdminMovers();
         await loadAdminTuning();
+        await loadAdminContentStats();
         await loadAdminSources();
         await loadAdminAlertBanner();
         await loadAdminThreads();
@@ -1699,6 +1702,125 @@
             await apiFetch('/api/admin/scoring/reset', { method: 'POST' });
             loadAdminTuning();
         };
+    }
+
+    // ============ ADMIN CONTENT STATS TAB ============
+    async function loadAdminContentStats() {
+        const el = document.getElementById('admin-cstats');
+        el.innerHTML = '<p style="color:var(--muted)">Loading content stats...</p>';
+
+        const resp = await apiFetch('/api/admin/content-stats');
+        const d = await resp.json();
+
+        // 1. Volume by day — SVG bar chart
+        const days = d.volume_by_day || [];
+        const maxVol = Math.max(...days.map(x => x.c), 1);
+        const barW = days.length > 0 ? Math.floor(500 / days.length) - 2 : 10;
+        const volBars = days.map((x, i) => {
+            const h = Math.max(2, (x.c / maxVol) * 100);
+            return `<rect x="${i * (barW + 2)}" y="${110 - h}" width="${barW}" height="${h}" fill="var(--accent)" rx="2">
+                <title>${x.d}: ${x.c} articles</title></rect>`;
+        }).join('');
+        const volChart = `<svg viewBox="0 0 ${days.length * (barW+2)} 120" style="width:100%;height:120px;">
+            <line x1="0" y1="110" x2="${days.length*(barW+2)}" y2="110" stroke="var(--border)" stroke-width="1"/>
+            ${volBars}
+        </svg>`;
+
+        // 3. Category — horizontal bars
+        const cats = Object.entries(d.by_category || {}).sort((a,b) => b[1] - a[1]);
+        const maxCat = Math.max(...cats.map(x => x[1]), 1);
+        const catBars = cats.map(([k, v]) =>
+            `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <span style="width:120px;font-size:0.85rem;color:var(--muted);text-align:right;">${k}</span>
+                <div style="flex:1;background:var(--border);border-radius:4px;height:18px;">
+                    <div style="width:${(v/maxCat*100).toFixed(1)}%;background:var(--accent);height:100%;border-radius:4px;"></div>
+                </div>
+                <span style="width:40px;font-size:0.85rem;">${v}</span>
+            </div>`
+        ).join('');
+
+        // 4. Quality distribution
+        const qBuckets = d.quality_distribution || [];
+        const maxQ = Math.max(...qBuckets.map(x => x.c), 1);
+        const qBars = qBuckets.map(b =>
+            `<div style="text-align:center;flex:1;">
+                <div style="height:80px;display:flex;align-items:flex-end;justify-content:center;">
+                    <div style="width:80%;background:var(--diamond);border-radius:4px 4px 0 0;height:${(b.c/maxQ*100).toFixed(0)}%;"></div>
+                </div>
+                <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">${b.bucket}</div>
+                <div style="font-size:0.85rem;">${b.c}</div>
+            </div>`
+        ).join('');
+
+        // 5. Age distribution
+        const ages = d.age_distribution || [];
+        const agePills = ages.map(a => {
+            const color = a.age === '<7d' ? 'var(--success)' : a.age === '7-30d' ? 'var(--gold)' : a.age === '30-90d' ? 'var(--muted)' : '#f87171';
+            return `<div class="stat-card"><div class="val" style="color:${color}">${a.c}</div><div class="lbl">${a.age}</div></div>`;
+        }).join('');
+
+        // 6. Sales pipeline
+        const s = d.sales || {};
+        const sRate = s.attempted > 0 ? Math.round(s.total / s.attempted * 100) : 0;
+
+        // 7. Domain pipeline
+        const doms = d.domains || [];
+        const tierDoms = doms.filter(x => x.dim === 'tier');
+        const statusDoms = doms.filter(x => x.dim === 'status');
+
+        // 2. By source table
+        const srcRows = (d.by_source || []).map(s => {
+            const hc = s.health_status === 'healthy' ? 'var(--success)' : s.health_status === 'stale' ? 'var(--gold)' : s.health_status === 'dead' ? '#f87171' : 'var(--muted)';
+            return `<tr><td>${s.name}</td><td>${s.total}</td><td>${s.last_7d}</td><td>${s.last_24h}</td>
+                <td><span style="color:${hc}">${s.enabled ? s.health_status : 'disabled'}</span></td></tr>`;
+        }).join('');
+
+        el.innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+                <div>
+                    <h3 style="margin-bottom:8px;">Article Volume (30d)</h3>
+                    ${volChart}
+                </div>
+                <div>
+                    <h3 style="margin-bottom:8px;">By Category</h3>
+                    ${catBars}
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;">
+                <div>
+                    <h3 style="margin-bottom:8px;">Quality Distribution</h3>
+                    <div style="display:flex;gap:4px;">${qBars}</div>
+                </div>
+                <div>
+                    <h3 style="margin-bottom:8px;">Article Age</h3>
+                    <div class="stats-grid">${agePills}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px;">
+                <div>
+                    <h3 style="margin-bottom:8px;">Extraction Pipeline</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card"><div class="val">${s.total}</div><div class="lbl">Total Sales</div></div>
+                        <div class="stat-card"><div class="val">${s.last_24h}</div><div class="lbl">Last 24h</div></div>
+                        <div class="stat-card"><div class="val">${sRate}%</div><div class="lbl">Success Rate</div></div>
+                    </div>
+                </div>
+                <div>
+                    <h3 style="margin-bottom:8px;">Domain Pipeline</h3>
+                    <div class="stats-grid">
+                        ${tierDoms.map(t => `<div class="stat-card"><div class="val">${t.c}</div><div class="lbl">${t.val}</div></div>`).join('')}
+                        ${statusDoms.map(t => {
+                            const sc = t.val==='available'?'var(--success)':t.val==='registered'?'#f87171':'var(--muted)';
+                            return `<div class="stat-card"><div class="val" style="color:${sc}">${t.c}</div><div class="lbl">${t.val}</div></div>`;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+            <h3 style="margin:24px 0 12px;">Articles by Source</h3>
+            <table class="data-table" style="font-size:0.85rem;">
+                <tr><th>Source</th><th>Total</th><th>7d</th><th>24h</th><th>Status</th></tr>
+                ${srcRows}
+            </table>`;
     }
 
     // ============ ALERT BANNER ============

@@ -774,6 +774,83 @@ export default {
       return json({ ok: true, id, rejected: true });
     }
 
+    // GET /api/admin/content-stats - Aggregated content dashboard stats
+    if (path === '/api/admin/content-stats' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+
+      const [volumeByDay, bySource, byCat, qualityDist, ageDist, salesStats, domainStats] = await Promise.all([
+        env.DB.prepare(
+          `SELECT date(curated_at) as d, COUNT(*) as c FROM curated_content
+           WHERE curated_at > datetime('now', '-30 days') GROUP BY d ORDER BY d ASC`
+        ).all(),
+        env.DB.prepare(
+          `SELECT s.name, s.health_status, s.enabled,
+           COUNT(c.id) as total,
+           SUM(CASE WHEN c.curated_at > datetime('now', '-7 days') THEN 1 ELSE 0 END) as last_7d,
+           SUM(CASE WHEN c.curated_at > datetime('now', '-1 days') THEN 1 ELSE 0 END) as last_24h
+           FROM curated_sources s LEFT JOIN curated_content c ON s.id = c.source_id
+           GROUP BY s.id ORDER BY total DESC`
+        ).all(),
+        env.DB.prepare(
+          `SELECT categories, COUNT(*) as c FROM curated_content
+           WHERE hidden = 0 GROUP BY categories ORDER BY c DESC LIMIT 20`
+        ).all(),
+        env.DB.prepare(
+          `SELECT CASE
+             WHEN quality_score <= 20 THEN '0-20'
+             WHEN quality_score <= 40 THEN '21-40'
+             WHEN quality_score <= 60 THEN '41-60'
+             WHEN quality_score <= 80 THEN '61-80'
+             ELSE '81-100' END as bucket, COUNT(*) as c
+           FROM curated_content GROUP BY bucket ORDER BY bucket`
+        ).all(),
+        env.DB.prepare(
+          `SELECT CASE
+             WHEN curated_at > datetime('now', '-7 days') THEN '<7d'
+             WHEN curated_at > datetime('now', '-30 days') THEN '7-30d'
+             WHEN curated_at > datetime('now', '-90 days') THEN '30-90d'
+             ELSE '90d+' END as age, COUNT(*) as c
+           FROM curated_content GROUP BY age`
+        ).all(),
+        env.DB.prepare(
+          `SELECT COUNT(*) as total,
+           SUM(CASE WHEN extracted_at > datetime('now', '-1 days') THEN 1 ELSE 0 END) as last_24h,
+           (SELECT COUNT(*) FROM curated_content WHERE extracted_at IS NOT NULL) as attempted,
+           (SELECT COUNT(*) FROM market_sales) as total_sales
+           FROM market_sales`
+        ).first(),
+        env.DB.prepare(
+          `SELECT 'tier' as dim, tier as val, COUNT(*) as c FROM domains GROUP BY tier
+           UNION ALL
+           SELECT 'status', availability_status, COUNT(*) FROM domains GROUP BY availability_status`
+        ).all(),
+      ]);
+
+      // Flatten category counts
+      const catCounts: Record<string, number> = {};
+      for (const row of (byCat.results || []) as any[]) {
+        try {
+          const cats = JSON.parse(row.categories || '[]');
+          for (const c of cats) catCounts[c] = (catCounts[c] || 0) + row.c;
+        } catch {}
+      }
+
+      return json({
+        volume_by_day: volumeByDay.results || [],
+        by_source: bySource.results || [],
+        by_category: catCounts,
+        quality_distribution: qualityDist.results || [],
+        age_distribution: ageDist.results || [],
+        sales: {
+          total: salesStats?.total_sales || 0,
+          last_24h: salesStats?.last_24h || 0,
+          attempted: salesStats?.attempted || 0,
+        },
+        domains: (domainStats.results || []),
+      });
+    }
+
     // GET /api/admin/movers?days=7 - Top score movers
     if (path === '/api/admin/movers' && request.method === 'GET') {
       const [user, err] = await requireAdmin(request, env);
