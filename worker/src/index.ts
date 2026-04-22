@@ -1869,13 +1869,17 @@ async function runRssCuration(env: Env): Promise<{ sources: number; fetched: num
 
   for (const source of (sources.results || [])) {
     try {
-      const newItems = await fetchAndCurateFeed(source, env);
+      const result = await fetchAndCurateFeed(source, env);
       fetched++;
-      inserted += newItems;
+      inserted += result.inserted;
 
       await env.DB.prepare(
-        'UPDATE curated_sources SET last_fetched_at = datetime(\'now\'), total_items = total_items + ? WHERE id = ?'
-      ).bind(newItems, source.id).run();
+        `UPDATE curated_sources SET last_fetched_at = datetime('now'),
+         total_items = total_items + ?,
+         items_accepted = items_accepted + ?,
+         items_rejected = items_rejected + ?
+         WHERE id = ?`
+      ).bind(result.inserted + result.skipped, result.inserted, result.skipped, source.id).run();
     } catch (e) {
       console.error(`RSS error for ${source.name}: ${e}`);
       errors++;
@@ -1885,16 +1889,17 @@ async function runRssCuration(env: Env): Promise<{ sources: number; fetched: num
   return { sources: sources.results?.length || 0, fetched, inserted, errors };
 }
 
-async function fetchAndCurateFeed(source: CurationSource, env: Env): Promise<number> {
+async function fetchAndCurateFeed(source: CurationSource, env: Env): Promise<{ inserted: number; skipped: number }> {
   const resp = await fetch(source.feed_url, {
     headers: { 'User-Agent': 'EyeCX/1.0 RSS Curator' },
     signal: AbortSignal.timeout(15000),
   });
-  if (!resp.ok) return 0;
+  if (!resp.ok) return { inserted: 0, skipped: 0 };
 
   const xml = await resp.text();
   const items = parseRssItems(xml, 50);
   let inserted = 0;
+  let skipped = 0;
 
   for (const item of items) {
     if (!item.url || !item.title) continue;
@@ -1903,7 +1908,7 @@ async function fetchAndCurateFeed(source: CurationSource, env: Env): Promise<num
     const exists = await env.DB.prepare(
       'SELECT id FROM curated_content WHERE url = ?'
     ).bind(item.url).first();
-    if (exists) continue;
+    if (exists) { skipped++; continue; }
 
     const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 100);
     const excerpt = (item.description || '').slice(0, 500);
@@ -1924,7 +1929,7 @@ async function fetchAndCurateFeed(source: CurationSource, env: Env): Promise<num
     inserted++;
   }
 
-  return inserted;
+  return { inserted, skipped };
 }
 
 function parseRssItems(xml: string, limit: number): Array<{
