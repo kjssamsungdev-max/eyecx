@@ -138,10 +138,20 @@ async function requireSession(request: Request, env: Env): Promise<[SessionUser 
 }
 
 async function requireAdmin(request: Request, env: Env): Promise<[SessionUser | null, Response | null]> {
+  // Session auth (human admin)
   const user = await authenticateSession(request, env);
-  if (!user) return [null, error('Not authenticated', 401)];
-  if (user.role !== 'admin') return [null, error('Admin required', 403)];
-  return [user, null];
+  if (user) {
+    if (user.role !== 'admin') return [null, error('Admin required', 403)];
+    return [user, null];
+  }
+  // Bearer API_SECRET fallback (service account for bulk scripts)
+  if (authenticate(request, env)) {
+    // Return a synthetic admin user for service calls
+    return [{ id: 'service', username: 'service', email: '', role: 'admin',
+      tier: '', email_verified: 1, avatar_url: '', bio: '', karma: 0, badges: '[]',
+      created_at: '' } as SessionUser, null];
+  }
+  return [null, error('Not authenticated', 401)];
 }
 
 // ============ EMAIL VIA RESEND ============

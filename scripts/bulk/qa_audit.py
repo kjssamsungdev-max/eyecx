@@ -11,10 +11,13 @@ VALID_TIERS = {'diamond', 'gold', 'silver', 'bronze', 'lead'}
 
 
 def api_call(path, method='GET', data=None):
-    req = urllib.request.Request(
-        f'{API}{path}', data=json.dumps(data).encode() if data else None,
-        headers={'Authorization': f'Bearer {SECRET}', 'Content-Type': 'application/json'},
-        method=method)
+    """Call Worker API with Bearer auth."""
+    headers = {'User-Agent': 'EyeCX-Bulk/1.0', 'Authorization': f'Bearer {SECRET}'}
+    body = None
+    if data is not None:
+        headers['Content-Type'] = 'application/json'
+        body = json.dumps(data).encode()
+    req = urllib.request.Request(f'{API}{path}', data=body, headers=headers, method=method)
     return json.loads(urllib.request.urlopen(req, timeout=60).read())
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bulk domain rescore via Worker API."""
+"""Bulk domain rescore via Worker API (Bearer auth)."""
 import json, os, urllib.request
 
 API = os.environ.get('EYECX_API_URL', 'https://eyecx-api.kjssamsungdev.workers.dev')
@@ -7,7 +7,8 @@ SECRET = os.environ['EYECX_API_SECRET']
 JOB_ID = os.environ.get('JOB_ID', '')
 
 
-def api_call(path, method='GET', data=None):
+def api_call(path, method='POST', data=None):
+    """Call Worker API with Bearer API_SECRET."""
     req = urllib.request.Request(
         f'{API}{path}', data=json.dumps(data).encode() if data else None,
         headers={'Authorization': f'Bearer {SECRET}', 'Content-Type': 'application/json'},
@@ -17,21 +18,7 @@ def api_call(path, method='GET', data=None):
 
 def main():
     print('=== Bulk Rescore ===')
-    # Login as admin to get session token
-    login = api_call('/api/auth/login', 'POST', {
-        'email': os.environ.get('ADMIN_EMAIL', 'admin@eyecx.com'),
-        'password': os.environ.get('ADMIN_PASSWORD', 'EyeCX2026Admin!')
-    })
-    token = login.get('token', '')
-    if not token:
-        print('Admin login failed')
-        return
-
-    # Call rescore with admin session
-    req = urllib.request.Request(
-        f'{API}/api/admin/rescore', method='POST',
-        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
-    result = json.loads(urllib.request.urlopen(req, timeout=120).read())
+    result = api_call('/api/admin/rescore')
 
     summary = f"Total: {result.get('total', 0)}, Changed: {result.get('changed', 0)}, Avg delta: {result.get('avg_delta', 0)}"
     risers = result.get('top_risers', [])[:5]
@@ -40,7 +27,7 @@ def main():
     print(summary)
 
     if JOB_ID:
-        api_call(f'/api/admin/jobs/{JOB_ID}/complete', 'POST', {'status': 'success', 'summary': summary})
+        api_call(f'/api/admin/jobs/{JOB_ID}/complete', data={'status': 'success', 'summary': summary})
 
 
 if __name__ == '__main__':
