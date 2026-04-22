@@ -152,3 +152,33 @@ CREATE TABLE IF NOT EXISTS weight_history (
 
 CREATE INDEX IF NOT EXISTS idx_wh_tld ON weight_history(tld);
 CREATE INDEX IF NOT EXISTS idx_wh_date ON weight_history(changed_at DESC);
+
+-- Note: curated_sources has additional columns:
+-- last_item_at TEXT, health_status TEXT DEFAULT 'healthy', consecutive_failures INTEGER DEFAULT 0
+
+-- Alerts (silent-failure detection)
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'warning',
+    message TEXT NOT NULL,
+    triggered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    resolved_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_type ON alerts(type);
+CREATE INDEX IF NOT EXISTS idx_alerts_date ON alerts(triggered_at DESC);
+
+-- Source auto-discovery candidates
+CREATE TABLE IF NOT EXISTS source_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL UNIQUE,
+    feed_url TEXT,
+    name TEXT,
+    discovered_from TEXT,
+    discovered_at TEXT DEFAULT (datetime('now')),
+    status TEXT DEFAULT 'pending',
+    reviewed_by TEXT,
+    reviewed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_status ON source_candidates(status);

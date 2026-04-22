@@ -223,6 +223,20 @@ export default {
       }
     }
 
+    // Source health check + alerts at 6 AM
+    if (hour === 6) {
+      try {
+        const health = await runSourceHealthCheck(env);
+        console.log(`Health check: ${health.healthy} healthy, ${health.stale} stale, ${health.dead} dead`);
+        const alerts = await runAlertCheck(env);
+        console.log(`Alert check: ${alerts.alerts_created} new alerts`);
+        const discovery = await runSourceDiscovery(env);
+        console.log(`Discovery: ${discovery.scanned} sites scanned, ${discovery.candidates} new candidates`);
+      } catch (e) {
+        console.error('Health/alerts/discovery error:', e);
+      }
+    }
+
     // CZDS only at 1 AM (note: ICANN blocks CF Worker IPs, so this is a no-op
     // in practice — CZDS downloads happen via GitHub Actions instead)
     if (hour === 1 && env.CZDS_USERNAME && env.CZDS_PASSWORD) {
@@ -587,6 +601,114 @@ export default {
       if (err) return err;
       await env.DB.prepare("DELETE FROM scoring_weights WHERE tld != '*'").run();
       return json({ ok: true, message: 'Per-TLD overrides cleared, defaults restored' });
+    }
+
+    // GET /api/admin/sources/health - Source health dashboard
+    if (path === '/api/admin/sources/health' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const sources = await env.DB.prepare(
+        `SELECT id, name, feed_url, enabled, health_status, last_fetched_at, last_item_at,
+         consecutive_failures, total_items, items_accepted, items_rejected
+         FROM curated_sources ORDER BY health_status DESC, name ASC`
+      ).all();
+      return json({ sources: sources.results || [] });
+    }
+
+    // POST /api/admin/sources/check-health - Manual health check
+    if (path === '/api/admin/sources/check-health' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const result = await runSourceHealthCheck(env);
+      return json(result);
+    }
+
+    // POST /api/admin/sources/:id/enable - Re-enable a source
+    if (path.match(/^\/api\/admin\/sources\/[^/]+\/enable$/) && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = path.split('/')[4];
+      await env.DB.prepare(
+        "UPDATE curated_sources SET enabled = 1, health_status = 'healthy', consecutive_failures = 0 WHERE id = ?"
+      ).bind(id).run();
+      return json({ ok: true, id, enabled: true });
+    }
+
+    // GET /api/admin/alerts - Active alerts
+    if (path === '/api/admin/alerts' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const active = await env.DB.prepare(
+        'SELECT * FROM alerts WHERE resolved_at IS NULL ORDER BY triggered_at DESC LIMIT 20'
+      ).all();
+      const resolved = await env.DB.prepare(
+        'SELECT * FROM alerts WHERE resolved_at IS NOT NULL ORDER BY resolved_at DESC LIMIT 10'
+      ).all();
+      return json({ active: active.results || [], resolved: resolved.results || [] });
+    }
+
+    // POST /api/admin/alerts/check - Manual alert check
+    if (path === '/api/admin/alerts/check' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const result = await runAlertCheck(env);
+      return json(result);
+    }
+
+    // POST /api/admin/alerts/:id/resolve - Resolve an alert
+    if (path.match(/^\/api\/admin\/alerts\/\d+\/resolve$/) && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[4]);
+      await env.DB.prepare(
+        "UPDATE alerts SET resolved_at = datetime('now'), resolved_by = ? WHERE id = ?"
+      ).bind(user!.id, id).run();
+      return json({ ok: true, id, resolved: true });
+    }
+
+    // GET /api/admin/sources/candidates - Source discovery candidates
+    if (path === '/api/admin/sources/candidates' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const rows = await env.DB.prepare(
+        'SELECT * FROM source_candidates WHERE status = ? ORDER BY discovered_at DESC LIMIT 50'
+      ).bind(url.searchParams.get('status') || 'pending').all();
+      return json({ candidates: rows.results || [] });
+    }
+
+    // POST /api/admin/sources/discover - Manual discovery run
+    if (path === '/api/admin/sources/discover' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const result = await runSourceDiscovery(env);
+      return json(result);
+    }
+
+    // POST /api/admin/sources/candidates/:id/approve - Approve a candidate
+    if (path.match(/^\/api\/admin\/sources\/candidates\/\d+\/approve$/) && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[5]);
+      const cand = await env.DB.prepare('SELECT * FROM source_candidates WHERE id = ?').bind(id).first<any>();
+      if (!cand) return error('Candidate not found', 404);
+      const srcId = cand.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO curated_sources (id, name, url, feed_url, type, category, enabled)
+         VALUES (?, ?, ?, ?, 'rss', 'Domain News', 1)`
+      ).bind(srcId, cand.name, cand.url, cand.feed_url).run();
+      await env.DB.prepare("UPDATE source_candidates SET status = 'approved', reviewed_by = ?, reviewed_at = datetime('now') WHERE id = ?")
+        .bind(user!.id, id).run();
+      return json({ ok: true, source_id: srcId });
+    }
+
+    // POST /api/admin/sources/candidates/:id/reject
+    if (path.match(/^\/api\/admin\/sources\/candidates\/\d+\/reject$/) && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[5]);
+      await env.DB.prepare("UPDATE source_candidates SET status = 'rejected', reviewed_by = ?, reviewed_at = datetime('now') WHERE id = ?")
+        .bind(user!.id, id).run();
+      return json({ ok: true, id, rejected: true });
     }
 
     // GET /api/admin/movers?days=7 - Top score movers
@@ -1873,16 +1995,21 @@ async function runRssCuration(env: Env): Promise<{ sources: number; fetched: num
       fetched++;
       inserted += result.inserted;
 
+      const lastItemClause = result.inserted > 0 ? ", last_item_at = datetime('now'), consecutive_failures = 0" : '';
       await env.DB.prepare(
         `UPDATE curated_sources SET last_fetched_at = datetime('now'),
          total_items = total_items + ?,
          items_accepted = items_accepted + ?,
          items_rejected = items_rejected + ?
+         ${lastItemClause}
          WHERE id = ?`
       ).bind(result.inserted + result.skipped, result.inserted, result.skipped, source.id).run();
     } catch (e) {
       console.error(`RSS error for ${source.name}: ${e}`);
       errors++;
+      await env.DB.prepare(
+        'UPDATE curated_sources SET consecutive_failures = consecutive_failures + 1 WHERE id = ?'
+      ).bind(source.id).run();
     }
   }
 
@@ -1987,6 +2114,182 @@ function extractTags(text: string): string[] {
     if (w.length > 3 && !stopwords.has(w)) freq[w] = (freq[w] || 0) + 1;
   }
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+}
+
+// ============ SOURCE HEALTH ============
+
+async function runSourceHealthCheck(env: Env): Promise<{ healthy: number; stale: number; dead: number; disabled: number }> {
+  const sources = await env.DB.prepare(
+    'SELECT id, name, enabled, last_fetched_at, last_item_at, consecutive_failures FROM curated_sources'
+  ).all<{ id: string; name: string; enabled: number; last_fetched_at: string; last_item_at: string; consecutive_failures: number }>();
+
+  let healthy = 0, stale = 0, dead = 0, disabled = 0;
+  const now = Date.now();
+
+  for (const s of (sources.results || [])) {
+    if (!s.enabled) { disabled++; continue; }
+
+    const lastItem = s.last_item_at ? new Date(s.last_item_at).getTime() : 0;
+    const lastFetch = s.last_fetched_at ? new Date(s.last_fetched_at).getTime() : 0;
+    const daysSinceItem = lastItem ? (now - lastItem) / 86400000 : 999;
+    const failures = s.consecutive_failures || 0;
+
+    let status = 'healthy';
+    if (failures >= 5 || daysSinceItem > 60) {
+      status = 'dead';
+      // Auto-disable after 60 days dead
+      if (daysSinceItem > 60) {
+        await env.DB.prepare('UPDATE curated_sources SET enabled = 0, health_status = ? WHERE id = ?').bind('dead', s.id).run();
+        disabled++; continue;
+      }
+    } else if (daysSinceItem > 7 || failures >= 2) {
+      status = 'stale';
+    }
+
+    await env.DB.prepare('UPDATE curated_sources SET health_status = ? WHERE id = ?').bind(status, s.id).run();
+    if (status === 'healthy') healthy++;
+    else if (status === 'stale') stale++;
+    else dead++;
+  }
+
+  return { healthy, stale, dead, disabled };
+}
+
+// ============ ALERTS ============
+
+async function runAlertCheck(env: Env): Promise<{ alerts_created: number }> {
+  let created = 0;
+
+  // Check 1: RSS produced 0 inserts in 12h
+  const recentCurated = await env.DB.prepare(
+    "SELECT COUNT(*) as c FROM curated_content WHERE curated_at > datetime('now', '-12 hours')"
+  ).first<{ c: number }>();
+  if ((recentCurated?.c || 0) === 0) {
+    await createAlert(env, 'rss_dry', 'warning', 'RSS curation produced 0 new articles in the last 12 hours');
+    created++;
+  }
+
+  // Check 2: daily-scan 0 qualified for 2 days
+  const recentDomains = await env.DB.prepare(
+    "SELECT COUNT(*) as c FROM domains WHERE first_seen > datetime('now', '-2 days')"
+  ).first<{ c: number }>();
+  if ((recentDomains?.c || 0) === 0) {
+    await createAlert(env, 'scan_dry', 'warning', 'Daily scan produced 0 qualified domains in the last 2 days');
+    created++;
+  }
+
+  // Check 3: sales extraction 0 in 48h
+  const recentSales = await env.DB.prepare(
+    "SELECT COUNT(*) as c FROM market_sales WHERE extracted_at > datetime('now', '-2 days')"
+  ).first<{ c: number }>();
+  if ((recentSales?.c || 0) === 0) {
+    await createAlert(env, 'sales_dry', 'info', 'Sales extraction produced 0 new sales in the last 48 hours');
+    created++;
+  }
+
+  return { alerts_created: created };
+}
+
+async function createAlert(env: Env, type: string, severity: string, message: string): Promise<void> {
+  // Dedupe: don't create if unresolved alert of same type exists
+  const existing = await env.DB.prepare(
+    'SELECT id FROM alerts WHERE type = ? AND resolved_at IS NULL'
+  ).bind(type).first();
+  if (existing) return;
+
+  await env.DB.prepare(
+    'INSERT INTO alerts (type, severity, message) VALUES (?, ?, ?)'
+  ).bind(type, severity, message).run();
+
+  // Send email if RESEND_API_KEY is set
+  if (env.RESEND_API_KEY) {
+    await sendEmail(env, 'admin@eyecx.com', `EyeCX Alert: ${type}`,
+      `<h3>${severity.toUpperCase()}: ${type}</h3><p>${message}</p><p><a href="https://eyecx.com/admin">View Dashboard</a></p>`
+    );
+  }
+}
+
+// ============ SOURCE AUTO-DISCOVERY ============
+
+const FEED_LINK_RE = /<link[^>]*type="application\/(rss|atom)\+xml"[^>]*href="([^"]+)"/gi;
+const FEED_LINK_RE2 = /<link[^>]*href="([^"]+)"[^>]*type="application\/(rss|atom)\+xml"/gi;
+
+async function runSourceDiscovery(env: Env): Promise<{ scanned: number; candidates: number }> {
+  // Find articles linked to high-value sales
+  const articles = await env.DB.prepare(
+    `SELECT DISTINCT c.url, c.source_name FROM curated_content c
+     INNER JOIN market_sales m ON c.url = m.source_url
+     WHERE m.sale_price_usd >= 50000 LIMIT 20`
+  ).all<{ url: string; source_name: string }>();
+
+  // Also scan recent high-quality curated content for outbound links
+  const highQ = await env.DB.prepare(
+    `SELECT url, title FROM curated_content WHERE quality_score >= 50
+     ORDER BY curated_at DESC LIMIT 30`
+  ).all<{ url: string; title: string }>();
+
+  const allUrls = new Set<string>();
+  for (const a of [...(articles.results || []), ...(highQ.results || [])]) {
+    try {
+      const domain = new URL(a.url).hostname;
+      allUrls.add(`https://${domain}`);
+    } catch {}
+  }
+
+  let scanned = 0, candidates = 0;
+
+  for (const siteUrl of allUrls) {
+    scanned++;
+    try {
+      const resp = await fetch(siteUrl, {
+        headers: { 'User-Agent': 'EyeCX/1.0 Feed Discovery' },
+        signal: AbortSignal.timeout(8000),
+        redirect: 'follow',
+      });
+      if (!resp.ok) continue;
+      const html = await resp.text();
+
+      // Extract RSS/Atom feed links from <head>
+      const feeds: string[] = [];
+      let match: RegExpExecArray | null;
+      for (const re of [FEED_LINK_RE, FEED_LINK_RE2]) {
+        re.lastIndex = 0;
+        for (let i = 0; i < 10; i++) {
+          match = re.exec(html);
+          if (!match) break;
+          const href = match[2] || match[1];
+          if (href.startsWith('http')) feeds.push(href);
+          else feeds.push(new URL(href, siteUrl).href);
+        }
+      }
+
+      for (const feedUrl of feeds.slice(0, 3)) {
+        // Check not already a source or candidate
+        const existsSource = await env.DB.prepare('SELECT id FROM curated_sources WHERE feed_url = ?').bind(feedUrl).first();
+        const existsCand = await env.DB.prepare('SELECT id FROM source_candidates WHERE feed_url = ?').bind(feedUrl).first();
+        if (existsSource || existsCand) continue;
+
+        // Verify it's actually a feed
+        try {
+          const fResp = await fetch(feedUrl, {
+            headers: { 'User-Agent': 'EyeCX/1.0 Feed Discovery' },
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!fResp.ok) continue;
+          const fText = await fResp.text();
+          if (!fText.includes('<item') && !fText.includes('<entry')) continue;
+
+          const name = siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+          await env.DB.prepare(
+            "INSERT OR IGNORE INTO source_candidates (url, feed_url, name, discovered_from) VALUES (?, ?, ?, ?)"
+          ).bind(siteUrl, feedUrl, name, 'auto-discovery').run();
+          candidates++;
+        } catch {}
+      }
+    } catch {}
+  }
+
+  return { scanned, candidates };
 }
 
 // ============ SELF-TUNING ============
