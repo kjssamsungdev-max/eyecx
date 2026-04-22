@@ -345,6 +345,33 @@ export default {
       return json({ domain, history: rows.results || [] });
     }
 
+    // GET /api/domain/:domain/comparables - Comparable market sales
+    if (path.match(/^\/api\/domain\/[^/]+\/comparables$/) && request.method === 'GET') {
+      const domain = path.split('/')[3];
+      const tld = '.' + domain.split('.').pop();
+      const nameLen = domain.split('.')[0].length;
+
+      const rows = await env.DB.prepare(
+        `SELECT domain, sale_price_usd, sale_date, source_name, extracted_at
+         FROM market_sales WHERE tld = ?
+         AND LENGTH(REPLACE(domain, tld, '')) - 1 BETWEEN ? AND ?
+         ORDER BY sale_price_usd DESC LIMIT 5`
+      ).bind(tld, nameLen - 2, nameLen + 2).all();
+
+      const stats = await env.DB.prepare(
+        `SELECT AVG(sale_price_usd) as avg_price, COUNT(*) as count
+         FROM market_sales WHERE tld = ?
+         AND LENGTH(REPLACE(domain, tld, '')) - 1 BETWEEN ? AND ?`
+      ).bind(tld, nameLen - 2, nameLen + 2).first<{ avg_price: number; count: number }>();
+
+      return json({
+        domain, tld, name_length: nameLen,
+        avg_price: Math.round(stats?.avg_price || 0),
+        comparable_count: stats?.count || 0,
+        sales: rows.results || [],
+      });
+    }
+
     if (path === '/api/threads' && request.method === 'GET') {
       return await listThreads(url, env);
     }
