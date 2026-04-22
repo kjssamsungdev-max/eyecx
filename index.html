@@ -1765,6 +1765,7 @@
                 <span style="color:var(--muted);font-size:0.9rem;" id="scan-info">${scanInfo}</span>
                 <div style="display:flex;gap:8px;">
                     <button class="btn btn-primary" style="padding:8px 16px;" id="run-scan-btn">Run scan now</button>
+                    <button class="btn btn-primary" style="padding:8px 16px;background:var(--gold);color:#000;" id="verify-batch-btn">Verify unknown</button>
                     <button class="vote-btn" id="scan-diagnose-btn">Diagnose</button>
                     <button class="vote-btn" id="scan-history-btn">Scan history</button>
                 </div>
@@ -1786,6 +1787,7 @@
             </div>
             <div id="domains-table"><p style="color:var(--muted)">Loading domains...</p></div>`;
 
+        params.set('admin', '1');
         const resp = await apiFetch(`/api/domains?${params}`);
         const data = await resp.json();
         const domains = data.domains || [];
@@ -1803,7 +1805,7 @@
                 <td><span class="tag">${d.tier}</span></td>
                 <td>${d.potential_score}</td>
                 <td>$${d.estimated_flip_value}</td>
-                <td id="status-${d.domain.replace(/\./g,'-')}">${d.availability_status || 'unknown'}</td>
+                <td id="status-${d.domain.replace(/\./g,'-')}">${d.availability_status === 'available' ? `<span style="color:var(--success)">available</span>` : d.availability_status === 'registered' ? `<span style="color:#f87171">registered</span>` : `<span style="color:var(--gold)">unverified</span>`}</td>
                 <td style="display:flex;gap:4px;flex-wrap:wrap;">
                     <button class="vote-btn" onclick="checkDomain('${d.domain}')">Check</button>
                     <button class="vote-btn" onclick="feedbackDomain('${d.domain}','saved')" title="Save">+</button>
@@ -1838,6 +1840,19 @@
             info.innerHTML = Object.entries(d).map(([k,v]) =>
                 `<span style="color:${v === true ? 'var(--success)' : v === false ? '#f87171' : 'var(--muted)'}">${k}: ${v}</span>`
             ).join(' | ');
+        };
+
+        document.getElementById('verify-batch-btn').onclick = async () => {
+            const btn = document.getElementById('verify-batch-btn');
+            const info = document.getElementById('scan-info');
+            btn.disabled = true; info.textContent = 'Verifying via RDAP (up to 100 domains)...';
+            try {
+                const r = await apiFetch('/api/admin/domains/verify-batch', { method: 'POST' });
+                const d = await r.json();
+                info.innerHTML = `<span style="color:var(--success)">Verified: ${d.checked} checked, ${d.available} available, ${d.registered} registered</span>`;
+                setTimeout(() => loadAdminDomains(), 1500);
+            } catch { info.innerHTML = '<span style="color:#f87171">Verification failed</span>'; }
+            btn.disabled = false;
         };
 
         document.getElementById('scan-history-btn').onclick = async () => {

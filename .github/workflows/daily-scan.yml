@@ -236,6 +236,69 @@ jobs:
           print(f'Total uploaded: {total_inserted}/{len(rows)}')
           "
 
+      - name: Verify domains via RDAP
+        if: steps.score.outputs.qualified != '0'
+        env:
+          EYECX_API_URL: https://eyecx-api.kjssamsungdev.workers.dev
+          EYECX_API_SECRET: ${{ secrets.EYECX_API_SECRET }}
+        run: |
+          echo "Running RDAP verification from GH runner (not Worker — CF IPs blocked by RDAP)..."
+          python3 -c "
+          import csv, json, urllib.request, time, os
+
+          api = os.environ['EYECX_API_URL']
+          secret = os.environ['EYECX_API_SECRET']
+          available, registered, errors = 0, 0, 0
+
+          with open('results/scored.csv') as f:
+              domains = [row['domain'] for row in csv.DictReader(f)]
+
+          print(f'Verifying {len(domains)} domains via RDAP...')
+          updates = []
+
+          for i, domain in enumerate(domains):
+              try:
+                  req = urllib.request.Request(f'https://rdap.org/domain/{domain}')
+                  resp = urllib.request.urlopen(req, timeout=10)
+                  status = 'registered'
+                  registered += 1
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      status = 'available'
+                      available += 1
+                  else:
+                      status = 'unknown'
+                      errors += 1
+              except Exception:
+                  status = 'unknown'
+                  errors += 1
+
+              updates.append({'domain': domain, 'availability_status': status})
+
+              if (i + 1) % 50 == 0:
+                  print(f'  Checked {i+1}/{len(domains)}: {available} available, {registered} registered')
+                  time.sleep(1)
+
+          print(f'RDAP done: {available} available, {registered} registered, {errors} errors')
+
+          # Batch update statuses via Worker API
+          for i in range(0, len(updates), 200):
+              batch = updates[i:i+200]
+              data = json.dumps(batch).encode()
+              try:
+                  req = urllib.request.Request(
+                      f'{api}/api/domains/verify-update', data=data,
+                      headers={'Authorization': f'Bearer {secret}', 'Content-Type': 'application/json'},
+                      method='POST')
+                  resp = urllib.request.urlopen(req, timeout=30)
+                  r = json.loads(resp.read())
+                  print(f'  Updated batch: {r.get(\"updated\",0)}')
+              except Exception as e:
+                  print(f'  Batch update failed: {e}')
+
+          print(f'Verification complete: {available} available, {registered} registered')
+          "
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

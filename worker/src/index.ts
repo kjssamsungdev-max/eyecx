@@ -675,6 +675,52 @@ export default {
       return json({ history: history.results || [], latest_run: latestRun });
     }
 
+    // POST /api/admin/domains/verify-batch - RDAP verify unknown domains
+    // Accepts admin session OR Bearer API_SECRET (for workflow use)
+    if (path === '/api/admin/domains/verify-batch' && request.method === 'POST') {
+      const sessionUser = await authenticateSession(request, env);
+      const bearerOk = authenticate(request, env);
+      if (!sessionUser && !bearerOk) return error('Admin or API auth required', 401);
+      if (sessionUser && sessionUser.role !== 'admin') return error('Admin required', 403);
+
+      const rows = await env.DB.prepare(
+        "SELECT domain FROM domains WHERE availability_status IN ('unknown', '') ORDER BY potential_score DESC LIMIT 100"
+      ).all<{ domain: string }>();
+
+      const domains = (rows.results || []).map(r => r.domain);
+      if (domains.length === 0) return json({ message: 'No unknown domains', checked: 0, available: 0, registered: 0 });
+
+      let checked = 0, available = 0, registered = 0;
+
+      for (let i = 0; i < domains.length; i += 10) {
+        const batch = domains.slice(i, i + 10);
+        const checks = batch.map(async (domain) => {
+          try {
+            const resp = await fetch(`https://rdap.org/domain/${domain}`, { signal: AbortSignal.timeout(10000) });
+            if (resp.status === 404) return { domain, status: 'available' };
+            if (resp.status === 200) return { domain, status: 'registered' };
+            return { domain, status: 'unknown' };
+          } catch { return { domain, status: 'unknown' }; }
+        });
+        const results = await Promise.allSettled(checks);
+        for (const r of results) {
+          if (r.status !== 'fulfilled') continue;
+          const { domain, status } = r.value;
+          checked++;
+          if (status === 'registered') {
+            registered++;
+            await env.DB.prepare("UPDATE domains SET availability_status = 'registered' WHERE domain = ?").bind(domain).run();
+          } else if (status === 'available') {
+            available++;
+            await env.DB.prepare("UPDATE domains SET availability_status = 'available' WHERE domain = ?").bind(domain).run();
+          }
+        }
+        if (i + 10 < domains.length) await new Promise(r => setTimeout(r, 1000));
+      }
+
+      return json({ checked, available, registered, remaining: domains.length - checked });
+    }
+
     // ============ PUBLIC DOMAIN LISTING (marketplace) ============
 
     // GET /api/domains - Public domain listing for marketplace
@@ -690,6 +736,21 @@ export default {
     }
 
     try {
+      // POST /api/domains/verify-update - Update availability_status only
+      if (path === '/api/domains/verify-update' && request.method === 'POST') {
+        const updates = await request.json() as Array<{ domain: string; availability_status: string }>;
+        if (!Array.isArray(updates)) return error('Array required');
+        let updated = 0;
+        for (const u of updates.slice(0, 1000)) {
+          if (!u.domain || !u.availability_status) continue;
+          await env.DB.prepare(
+            'UPDATE domains SET availability_status = ? WHERE domain = ?'
+          ).bind(u.availability_status, u.domain).run();
+          updated++;
+        }
+        return json({ ok: true, updated });
+      }
+
       // POST /api/domains/bulk - Bulk upsert domains (from daily scan pipeline)
       if (path === '/api/domains/bulk' && request.method === 'POST') {
         const rows = await request.json() as any[];
@@ -846,9 +907,18 @@ async function getDomains(url: URL, env: Env): Promise<Response> {
            majestic_rank, tranco_rank, availability_status, first_seen,
            score_version, last_rescored_at
     FROM domains
-    WHERE potential_score >= ? AND availability_status != 'registered'
+    WHERE potential_score >= ?
   `;
   const params: any[] = [minScore];
+
+  // Public callers only see verified-available domains
+  // Admin callers pass ?admin=1 to see all (including unknown)
+  const isAdmin = url.searchParams.get('admin') === '1';
+  if (!isAdmin) {
+    query += " AND availability_status = 'available'";
+  } else {
+    query += " AND availability_status != 'registered'";
+  }
 
   if (tier) {
     query += ' AND tier = ?';
