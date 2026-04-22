@@ -1183,8 +1183,12 @@
 
     <div id="view-marketplace" class="app-view">
         <div class="container">
-            <h2>Dropped Domains — Daily Feed from ICANN CZDS</h2>
-            <p style="color:var(--muted);margin-bottom:24px;">Domains that dropped from .xyz, .info, and .org zone files. Updated daily.</p>
+            <h2 style="display:flex;align-items:center;gap:8px;">Dropped Domains
+                <span style="cursor:help;font-size:0.8rem;color:var(--muted);border:1px solid var(--border);border-radius:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;"
+                    title="Scoring signals:&#10;1. CZDS zone file drops (daily diff)&#10;2. Wayback Machine history (snapshots + age)&#10;3. OpenPageRank (backlink authority)&#10;4. RDAP availability verification&#10;5. Cloudflare Registrar pricing&#10;6. Brandability (length, dictionary, pronounceability)&#10;7. Market sale comparables (DNJournal, NamePros)">?</span>
+            </h2>
+            <p style="color:var(--muted);margin-bottom:16px;">Daily dropped domains, scored on history + market + brandability signals.</p>
+            <p style="color:var(--border);font-size:0.8rem;margin-bottom:24px;">Data: ICANN zone files (.xyz .info .org) + Wayback Machine + RDAP + OpenPageRank + Cloudflare Registrar. Sale comparables from DNJournal, NamePros, DomainInvesting.</p>
             <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
                 <select id="mp-tier" class="form-input" style="width:auto;padding:8px 12px;">
                     <option value="">All tiers</option>
@@ -2397,21 +2401,23 @@
         const tierColors = { diamond: 'var(--diamond)', gold: 'var(--gold)', silver: '#94a3b8', bronze: '#cd7f32' };
 
         el.innerHTML = `<table class="data-table">
-            <tr><th>Domain</th><th>TLD</th><th>Tier</th><th>Score</th><th>Value</th><th>Age</th><th>Snapshots</th><th>Actions</th></tr>
-            ${domains.map(d => `<tr>
+            <tr><th>Domain</th><th>TLD</th><th>Tier</th><th>Score</th><th>Value</th><th>History</th><th>Actions</th></tr>
+            ${domains.map(d => {
+                const hist = (d.estimated_age_years || d.wayback_snapshots)
+                    ? `${d.estimated_age_years ? d.estimated_age_years + 'y' : ''} ${d.wayback_snapshots ? d.wayback_snapshots + ' snaps' : ''}`.trim()
+                    : '<span style="color:var(--muted);font-size:0.8rem;">New drop</span>';
+                const action = user
+                    ? `<button class="vote-btn" id="mp-check-${d.domain.replace(/\./g,'-')}" onclick="mpCheckAvail('${d.domain}')">Check availability</button>`
+                    : `<a href="/login" style="color:var(--muted);font-size:0.85rem;">Sign in to check</a>`;
+                return `<tr>
                 <td><strong style="cursor:pointer;color:var(--accent);" onclick="showDomainModal('${d.domain}')">${d.domain}</strong></td>
                 <td>${d.tld}</td>
                 <td><span style="color:${tierColors[d.tier]||'var(--muted)'};font-weight:600;">${d.tier}</span></td>
                 <td>${d.potential_score}</td>
                 <td>$${d.estimated_flip_value}</td>
-                <td>${d.estimated_age_years ? d.estimated_age_years + 'y' : '-'}</td>
-                <td>${d.wayback_snapshots || '-'}</td>
-                <td>
-                    ${user
-                        ? `<button class="vote-btn" id="mp-check-${d.domain.replace(/\./g,'-')}" onclick="mpCheckAvail('${d.domain}')">Check availability</button>`
-                        : `<a href="/login" style="color:var(--muted);font-size:0.85rem;">Sign in to check</a>`}
-                </td>
-            </tr>`).join('')}
+                <td>${hist}</td>
+                <td>${action}</td>
+            </tr>`;}).join('')}
         </table>`;
 
         renderMpPagination(domains.length);
@@ -2481,17 +2487,32 @@
                     <h3>${d.domain}</h3>
                     <button class="vote-btn" onclick="document.getElementById('domain-modal').style.display='none'">Close</button>
                 </div>
-                <table class="data-table" style="margin-top:16px;">
+                <div style="display:flex;gap:8px;margin:16px 0;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:80px;text-align:center;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;">
+                        <div style="font-size:1.3rem;font-weight:700;color:var(--accent);">${d.potential_score}</div>
+                        <div style="font-size:0.75rem;color:var(--muted);">Total Score</div>
+                    </div>
+                    <div style="flex:1;min-width:80px;text-align:center;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;">
+                        <div style="font-size:1.3rem;font-weight:700;">${d.brand_score || 0}</div>
+                        <div style="font-size:0.75rem;color:var(--muted);">Brandability</div>
+                    </div>
+                    <div style="flex:1;min-width:80px;text-align:center;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;">
+                        <div style="font-size:1.3rem;font-weight:700;">${d.page_rank || 0}</div>
+                        <div style="font-size:0.75rem;color:var(--muted);">PageRank</div>
+                    </div>
+                    <div style="flex:1;min-width:80px;text-align:center;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;">
+                        <div style="font-size:1.3rem;font-weight:700;">${d.wayback_snapshots || 0}</div>
+                        <div style="font-size:0.75rem;color:var(--muted);">Wayback Snaps</div>
+                    </div>
+                </div>
+                <table class="data-table" style="font-size:0.9rem;">
                     <tr><td style="color:var(--muted)">TLD</td><td>${d.tld}</td></tr>
-                    <tr><td style="color:var(--muted)">Tier</td><td>${d.tier}</td></tr>
-                    <tr><td style="color:var(--muted)">Score</td><td>${d.potential_score}${d.score_version ? ` (v${d.score_version})` : ''}</td></tr>
-                    <tr><td style="color:var(--muted)">Flip value</td><td>$${d.estimated_flip_value}</td></tr>
-                    <tr><td style="color:var(--muted)">Page rank</td><td>${d.page_rank || '-'}</td></tr>
-                    <tr><td style="color:var(--muted)">Wayback</td><td>${d.wayback_snapshots || '-'} snapshots</td></tr>
-                    <tr><td style="color:var(--muted)">Age</td><td>${d.estimated_age_years ? d.estimated_age_years + 'y' : '-'}</td></tr>
-                    <tr><td style="color:var(--muted)">Status</td><td>${d.availability_status || 'unknown'}</td></tr>
-                    <tr><td style="color:var(--muted)">First seen</td><td>${d.first_seen?.slice(0,10) || '-'}</td></tr>
-                    ${d.last_rescored_at ? `<tr><td style="color:var(--muted)">Rescored</td><td>${d.last_rescored_at?.slice(0,10)}</td></tr>` : ''}
+                    <tr><td style="color:var(--muted)">Tier</td><td><span style="color:${{'diamond':'var(--diamond)','gold':'var(--gold)','silver':'#94a3b8','bronze':'#cd7f32'}[d.tier]||'var(--muted)'};font-weight:600;">${d.tier}</span>${d.score_version ? ` (v${d.score_version})` : ''}</td></tr>
+                    <tr><td style="color:var(--muted)">Estimated value</td><td>$${d.estimated_flip_value}</td></tr>
+                    ${d.estimated_age_years ? `<tr><td style="color:var(--muted)">Domain age</td><td>${d.estimated_age_years} years</td></tr>` : ''}
+                    <tr><td style="color:var(--muted)">Availability</td><td><span style="color:${d.availability_status==='available'?'var(--success)':d.availability_status==='registered'?'#f87171':'var(--gold)'};">${d.availability_status || 'unverified'}</span></td></tr>
+                    <tr><td style="color:var(--muted)">First seen</td><td>${d.first_seen?.slice(0,10) || 'today'}</td></tr>
+                    ${d.last_rescored_at ? `<tr><td style="color:var(--muted)">Last rescored</td><td>${d.last_rescored_at?.slice(0,10)}</td></tr>` : ''}
                 </table>
                 ${compCount > 0 ? `<h3 style="margin:24px 0 12px;">Comparable Sales</h3>
                 <p style="color:var(--muted);font-size:0.9rem;margin-bottom:12px;">

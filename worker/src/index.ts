@@ -1172,7 +1172,7 @@ async function getDomains(url: URL, env: Env): Promise<Response> {
     SELECT domain, tld, potential_score, tier, estimated_flip_value,
            page_rank, wayback_snapshots, estimated_age_years, backlinks,
            majestic_rank, tranco_rank, availability_status, first_seen,
-           score_version, last_rescored_at
+           score_version, last_rescored_at, brand_score
     FROM domains
     WHERE potential_score >= ?
   `;
