@@ -1118,6 +1118,7 @@
                 <button data-tab="admin-sales">Sales Intel</button>
                 <button data-tab="admin-movers">Movers</button>
                 <button data-tab="admin-tuning">Tuning</button>
+                <button data-tab="admin-sources">Sources</button>
                 <button data-tab="admin-threads">Threads</button>
                 <button data-tab="admin-waitlist">Waitlist</button>
             </div>
@@ -1126,6 +1127,7 @@
             <div id="admin-sales" style="display:none;"></div>
             <div id="admin-movers" style="display:none;"></div>
             <div id="admin-tuning" style="display:none;"></div>
+            <div id="admin-sources" style="display:none;"></div>
             <div id="admin-threads" style="display:none;"></div>
             <div id="admin-users" style="display:none;"></div>
             <div id="admin-content" style="display:none;"></div>
@@ -1386,7 +1388,7 @@
                 }">${fbMap[s]||0}</div><div class="lbl">${s}</div></div>`).join('');
 
         // Tab switching
-        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-threads','admin-users','admin-content','admin-waitlist'];
+        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-sources','admin-threads','admin-users','admin-content','admin-waitlist'];
         document.querySelectorAll('#admin-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
@@ -1424,6 +1426,8 @@
         await loadAdminSales();
         await loadAdminMovers();
         await loadAdminTuning();
+        await loadAdminSources();
+        await loadAdminAlertBanner();
         await loadAdminThreads();
     }
 
@@ -1683,6 +1687,111 @@
             await apiFetch('/api/admin/scoring/reset', { method: 'POST' });
             loadAdminTuning();
         };
+    }
+
+    // ============ ALERT BANNER ============
+    async function loadAdminAlertBanner() {
+        const resp = await apiFetch('/api/admin/alerts');
+        const d = await resp.json();
+        const active = d.active || [];
+        if (!active.length) return;
+        const banner = document.createElement('div');
+        banner.style.cssText = 'background:#f87171;color:#000;padding:12px 24px;margin-bottom:16px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;';
+        banner.innerHTML = `<span>${active.length} active alert(s): ${active.map(a => a.message).join('; ')}</span>
+            <button class="vote-btn" style="border-color:#000;color:#000;" onclick="this.parentElement.remove()">Dismiss</button>`;
+        document.getElementById('admin-stats').parentElement.insertBefore(banner, document.getElementById('admin-stats'));
+    }
+
+    // ============ ADMIN SOURCES TAB ============
+    async function loadAdminSources() {
+        const el = document.getElementById('admin-sources');
+        el.innerHTML = '<p style="color:var(--muted)">Loading sources...</p>';
+
+        const [hResp, cResp] = await Promise.all([
+            apiFetch('/api/admin/sources/health'),
+            apiFetch('/api/admin/sources/candidates'),
+        ]);
+        const hData = await hResp.json();
+        const cData = await cResp.json();
+        const sources = hData.sources || [];
+        const candidates = cData.candidates || [];
+
+        const statusColor = { healthy: 'var(--success)', stale: 'var(--gold)', dead: '#f87171', failing: '#f87171' };
+        const counts = { healthy: 0, stale: 0, dead: 0, disabled: 0 };
+        for (const s of sources) {
+            if (!s.enabled) counts.disabled++;
+            else counts[s.health_status] = (counts[s.health_status] || 0) + 1;
+        }
+
+        el.innerHTML = `
+            <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;">
+                <button class="btn btn-primary" style="padding:8px 16px;" id="check-health-btn">Check health</button>
+                <button class="vote-btn" id="discover-btn">Discover sources</button>
+                <button class="vote-btn" id="check-alerts-btn">Check alerts</button>
+                <span id="sources-msg" style="color:var(--muted);font-size:0.9rem;"></span>
+            </div>
+            <div class="stats-grid" style="margin-bottom:24px;">
+                <div class="stat-card"><div class="val" style="color:var(--success)">${counts.healthy}</div><div class="lbl">Healthy</div></div>
+                <div class="stat-card"><div class="val" style="color:var(--gold)">${counts.stale}</div><div class="lbl">Stale</div></div>
+                <div class="stat-card"><div class="val" style="color:#f87171">${counts.dead}</div><div class="lbl">Dead</div></div>
+                <div class="stat-card"><div class="val">${counts.disabled}</div><div class="lbl">Disabled</div></div>
+            </div>
+            <h3 style="margin-bottom:12px;">Sources</h3>
+            <table class="data-table" style="font-size:0.85rem;">
+                <tr><th>Name</th><th>Status</th><th>Last Item</th><th>Failures</th><th>Items</th><th></th></tr>
+                ${sources.map(s => `<tr>
+                    <td>${s.name}</td>
+                    <td><span style="color:${statusColor[s.health_status]||'var(--muted)'};font-weight:600;">${s.enabled ? s.health_status : 'disabled'}</span></td>
+                    <td>${s.last_item_at?.slice(0,10) || 'never'}</td>
+                    <td>${s.consecutive_failures}</td>
+                    <td>${s.items_accepted}/${s.total_items}</td>
+                    <td>${!s.enabled ? `<button class="vote-btn" onclick="enableSource('${s.id}')">Enable</button>` : ''}</td>
+                </tr>`).join('')}
+            </table>
+            ${candidates.length ? `<h3 style="margin:24px 0 12px;">Candidates (${candidates.length})</h3>
+            ${candidates.map(c => `<div class="card" style="display:flex;justify-content:space-between;align-items:center;" id="cand-${c.id}">
+                <div><strong>${c.name}</strong><br><span style="color:var(--muted);font-size:0.85rem;">${c.feed_url}</span></div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" style="padding:4px 12px;font-size:0.85rem;" onclick="approveCand(${c.id})">Approve</button>
+                    <button class="vote-btn" onclick="rejectCand(${c.id})">Reject</button>
+                </div>
+            </div>`).join('')}` : ''}`;
+
+        document.getElementById('check-health-btn').onclick = async () => {
+            const msg = document.getElementById('sources-msg');
+            msg.textContent = 'Checking...';
+            const r = await apiFetch('/api/admin/sources/check-health', { method: 'POST' });
+            const d = await r.json();
+            msg.innerHTML = `<span style="color:var(--success)">Health: ${d.healthy} healthy, ${d.stale} stale, ${d.dead} dead</span>`;
+            setTimeout(() => loadAdminSources(), 1500);
+        };
+        document.getElementById('discover-btn').onclick = async () => {
+            const msg = document.getElementById('sources-msg');
+            msg.textContent = 'Discovering...';
+            const r = await apiFetch('/api/admin/sources/discover', { method: 'POST' });
+            const d = await r.json();
+            msg.innerHTML = `Scanned ${d.scanned} sites, found ${d.candidates} new candidates`;
+            if (d.candidates > 0) setTimeout(() => loadAdminSources(), 1500);
+        };
+        document.getElementById('check-alerts-btn').onclick = async () => {
+            const msg = document.getElementById('sources-msg');
+            const r = await apiFetch('/api/admin/alerts/check', { method: 'POST' });
+            const d = await r.json();
+            msg.textContent = `Alert check: ${d.alerts_created} new alerts`;
+        };
+    }
+
+    async function enableSource(id) {
+        await apiFetch(`/api/admin/sources/${id}/enable`, { method: 'POST' });
+        loadAdminSources();
+    }
+    async function approveCand(id) {
+        await apiFetch(`/api/admin/sources/candidates/${id}/approve`, { method: 'POST' });
+        document.getElementById('cand-' + id)?.remove();
+    }
+    async function rejectCand(id) {
+        await apiFetch(`/api/admin/sources/candidates/${id}/reject`, { method: 'POST' });
+        document.getElementById('cand-' + id)?.remove();
     }
 
     // ============ ADMIN THREADS TAB ============
