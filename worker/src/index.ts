@@ -2131,17 +2131,17 @@ async function runSourceHealthCheck(env: Env): Promise<{ healthy: number; stale:
 
     const lastItem = s.last_item_at ? new Date(s.last_item_at).getTime() : 0;
     const lastFetch = s.last_fetched_at ? new Date(s.last_fetched_at).getTime() : 0;
-    const daysSinceItem = lastItem ? (now - lastItem) / 86400000 : 999;
+    const daysSinceItem = lastItem ? (now - lastItem) / 86400000 : (lastFetch ? (now - lastFetch) / 86400000 : 999);
     const failures = s.consecutive_failures || 0;
 
     let status = 'healthy';
-    if (failures >= 5 || daysSinceItem > 60) {
+    if (failures >= 5) {
       status = 'dead';
-      // Auto-disable after 60 days dead
-      if (daysSinceItem > 60) {
-        await env.DB.prepare('UPDATE curated_sources SET enabled = 0, health_status = ? WHERE id = ?').bind('dead', s.id).run();
-        disabled++; continue;
-      }
+    } else if (daysSinceItem > 60 && lastItem > 0) {
+      // Only auto-disable if we KNOW it had items before and stopped
+      status = 'dead';
+      await env.DB.prepare('UPDATE curated_sources SET enabled = 0, health_status = ? WHERE id = ?').bind('dead', s.id).run();
+      disabled++; continue;
     } else if (daysSinceItem > 7 || failures >= 2) {
       status = 'stale';
     }
