@@ -958,6 +958,7 @@
                 <button data-tab="admin-jobs">Jobs</button>
                 <button data-tab="admin-cstats">Content Stats</button>
                 <button data-tab="admin-sources">Sources</button>
+                <button data-tab="admin-apikeys">API Keys</button>
                 <button data-tab="admin-alerts">Alerts</button>
                 <button data-tab="admin-threads">Threads</button>
                 <button data-tab="admin-waitlist">Waitlist</button>
@@ -970,6 +971,7 @@
             <div id="admin-jobs" style="display:none;"></div>
             <div id="admin-cstats" style="display:none;"></div>
             <div id="admin-sources" style="display:none;"></div>
+            <div id="admin-apikeys" style="display:none;"></div>
             <div id="admin-alerts" style="display:none;"></div>
             <div id="admin-threads" style="display:none;"></div>
             <div id="admin-users" style="display:none;"></div>
@@ -1019,6 +1021,49 @@
                 <div id="blog-curated" style="display:none;"></div>
             </div>
             <div id="blog-article" style="display:none;"></div>
+        </div>
+    </div>
+
+    <div id="view-docs" class="app-view">
+        <div class="container" style="max-width:800px;">
+            <h2>API Documentation</h2>
+            <div class="card-body">
+                <h3>Authentication</h3>
+                <p>All /v1 endpoints require an API key via the <code>X-API-Key</code> header.</p>
+                <pre>curl -H "X-API-Key: eyecx_live_abc123..." https://eyecx-api.kjssamsungdev.workers.dev/v1/domains</pre>
+
+                <h3>Endpoints</h3>
+                <table class="data-table" style="font-size:0.9rem;">
+                    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+                    <tr><td>GET</td><td>/v1/domains</td><td>List available domains. Params: tier, tld, min_score, search, limit (max 100), offset</td></tr>
+                    <tr><td>GET</td><td>/v1/domains/:domain</td><td>Single domain detail</td></tr>
+                    <tr><td>GET</td><td>/v1/sales</td><td>Market sales data. Params: tld, limit, offset</td></tr>
+                    <tr><td>GET</td><td>/v1/tlds</td><td>Active TLD list</td></tr>
+                    <tr><td>GET</td><td>/v1/stats</td><td>Aggregate statistics</td></tr>
+                </table>
+
+                <h3>Response format</h3>
+                <pre>{"data": [...], "meta": {"limit": 50, "offset": 0, "total": 123}}</pre>
+
+                <h3>Rate limits</h3>
+                <p>Free tier: 100 requests/hour. Exceeding returns 429 with <code>Retry-After: 3600</code>.</p>
+
+                <h3>Errors</h3>
+                <table class="data-table" style="font-size:0.9rem;">
+                    <tr><th>Code</th><th>Meaning</th></tr>
+                    <tr><td>401</td><td>Missing or invalid API key</td></tr>
+                    <tr><td>404</td><td>Resource not found</td></tr>
+                    <tr><td>429</td><td>Rate limit exceeded</td></tr>
+                </table>
+
+                <h3>Request an API key</h3>
+                <form id="request-key-form" style="margin-top:16px;">
+                    <div class="form-group"><label>Email</label><input type="email" name="email" class="form-input" required></div>
+                    <div class="form-group"><label>Intended use</label><textarea name="use" class="form-input" rows="3" placeholder="What will you build with the API?" required></textarea></div>
+                    <button type="submit" class="btn btn-primary">Request a key</button>
+                    <div id="request-key-msg" class="form-msg"></div>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -1121,7 +1166,7 @@
     }
 
     // ============ ROUTER ============
-    const routes = ['/', '/login', '/register', '/admin', '/community', '/blog', '/marketplace'];
+    const routes = ['/', '/login', '/register', '/admin', '/community', '/blog', '/marketplace', '/docs'];
 
     function navigate(path) {
         history.pushState(null, '', path);
@@ -1158,6 +1203,8 @@
             loadBlog(path);
         } else if (path === '/marketplace') {
             loadMarketplace();
+        } else if (path === '/docs' || path.startsWith('/docs/')) {
+            loadDocs();
         } else {
             landing.style.display = '';
             footer.style.display = '';
@@ -1289,7 +1336,7 @@
                 }">${fbMap[s]||0}</div><div class="lbl">${s}</div></div>`).join('');
 
         // Tab switching
-        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-jobs','admin-cstats','admin-sources','admin-alerts','admin-threads','admin-users','admin-content','admin-waitlist'];
+        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-jobs','admin-cstats','admin-sources','admin-apikeys','admin-alerts','admin-threads','admin-users','admin-content','admin-waitlist'];
         document.querySelectorAll('#admin-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
@@ -1330,6 +1377,7 @@
         await loadAdminJobs();
         await loadAdminContentStats();
         await loadAdminSources();
+        await loadAdminApiKeys();
         await loadAdminAlertBanner();
         await loadAdminAlerts();
         await loadAdminThreads();
@@ -1877,6 +1925,72 @@
         } catch { showToast('Failed to reject', 'error'); }
     }
 
+    // ============ ADMIN API KEYS TAB ============
+    async function loadAdminApiKeys() {
+        const el = document.getElementById('admin-apikeys');
+        el.innerHTML = '<p style="color:var(--muted)">Loading API keys...</p>';
+
+        const resp = await apiFetch('/api/admin/api-keys');
+        const d = await resp.json();
+        const keys = d.keys || [];
+
+        el.innerHTML = `
+            <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;">
+                <button class="btn btn-primary" style="padding:8px 16px;" id="create-key-btn">Create key</button>
+                <span id="apikey-msg" style="color:var(--muted);font-size:0.9rem;"></span>
+            </div>
+            <div id="new-key-reveal" style="display:none;" class="card" style="margin-bottom:16px;"></div>
+            ${keys.length ? `<table class="data-table" style="font-size:0.85rem;">
+                <tr><th>Label</th><th>Prefix</th><th>Email</th><th>Tier</th><th>Requests</th><th>Last Used</th><th>Status</th><th></th></tr>
+                ${keys.map(k => `<tr>
+                    <td>${k.label}</td>
+                    <td><code>${k.key_prefix}</code></td>
+                    <td>${k.owner_email}</td>
+                    <td>${k.tier}</td>
+                    <td>${k.total_requests}</td>
+                    <td>${k.last_used_at?.slice(0,16) || 'never'}</td>
+                    <td><span style="color:${k.active ? 'var(--success)' : '#f87171'}">${k.active ? 'active' : 'revoked'}</span></td>
+                    <td>${k.active ? `<button class="vote-btn" onclick="revokeKey(${k.id})">Revoke</button>` : ''}</td>
+                </tr>`).join('')}
+            </table>` : '<p style="color:var(--muted)">No API keys. Create one to enable /v1 access.</p>'}`;
+
+        document.getElementById('create-key-btn').onclick = async () => {
+            const label = prompt('Key label (e.g., "My App"):');
+            if (!label) return;
+            const email = prompt('Owner email:');
+            if (!email) return;
+            const tier = prompt('Tier (free/pro):', 'free');
+
+            try {
+                const r = await apiFetch('/api/admin/api-keys/create', {
+                    method: 'POST', body: JSON.stringify({ label, owner_email: email, tier: tier || 'free' })
+                });
+                const d = await r.json();
+                if (d.key) {
+                    const reveal = document.getElementById('new-key-reveal');
+                    reveal.style.display = '';
+                    reveal.innerHTML = `
+                        <div style="background:#dc2626;color:#fff;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:0.9rem;">This key is shown once. Save it now.</div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <code id="new-key-value" style="flex:1;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;word-break:break-all;">${d.key}</code>
+                            <button class="btn btn-primary" style="padding:8px 16px;" onclick="navigator.clipboard.writeText('${d.key}');showToast('Key copied','success');">Copy</button>
+                        </div>`;
+                    showToast('API key created', 'success');
+                    setTimeout(() => loadAdminApiKeys(), 2000);
+                }
+            } catch { showToast('Failed to create key', 'error'); }
+        };
+    }
+
+    async function revokeKey(id) {
+        if (!confirm('Revoke this API key? It cannot be undone.')) return;
+        try {
+            await apiFetch(`/api/admin/api-keys/${id}/revoke`, { method: 'POST' });
+            showToast('Key revoked', 'warning');
+            loadAdminApiKeys();
+        } catch { showToast('Failed to revoke', 'error'); }
+    }
+
     // ============ ADMIN ALERTS TAB ============
     async function loadAdminAlerts() {
         const el = document.getElementById('admin-alerts');
@@ -2375,6 +2489,27 @@
                 <span>${a.views} views</span><span>${a.published_at?.slice(0,10)||''}</span>
             </div>
             <div class="card-body"><p>${rendered}</p></div>`;
+    }
+
+    // ============ DOCS ============
+    function loadDocs() {
+        document.getElementById('view-docs').classList.add('active');
+        const form = document.getElementById('request-key-form');
+        if (form) form.onsubmit = async (e) => {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            const msg = document.getElementById('request-key-msg');
+            try {
+                const r = await fetch(`${API}/api/public/api-keys/request`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'EyeCX' },
+                    body: JSON.stringify({ email: fd.get('email'), intended_use: fd.get('use') }),
+                });
+                const d = await r.json();
+                msg.textContent = d.message || 'Request sent';
+                msg.className = 'form-msg success';
+                e.target.reset();
+            } catch { msg.textContent = 'Failed to submit'; msg.className = 'form-msg error'; }
+        };
     }
 
     // ============ MARKETPLACE ============
