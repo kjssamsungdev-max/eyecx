@@ -1,180 +1,160 @@
-# EyeCX
+# EyeCX — Drop Domain Intelligence Platform
 
-**Distribution Infrastructure for Developers**
+Detects domains dropping from ICANN CZDS zone files daily, scores them across 7 signals, verifies availability via RDAP, and surfaces the best ones in a public marketplace. A self-learning loop reweights scoring based on real market sales extracted from domain industry news.
 
-You don't have a product problem. You have a distribution problem.
-
-Goal: build a distribution network of 100+ domains across 10+ niches in 2026.
+Live at [eyecx.com](https://eyecx.com). Admin at [eyecx.com/admin](https://eyecx.com/admin).
 
 ---
 
-## The Distribution Problem
-
-Every developer hits the same wall:
+## Architecture
 
 ```
-Built amazing app → Launched → Crickets → Why?
+Frontend:   Single-file SPA (index.html) on Cloudflare Pages
+Backend:    Cloudflare Worker (TypeScript) → D1 (SQLite) + R2 (object storage)
+Pipeline:   GitHub Actions cron → Python scripts
+Auth:       Session tokens (community) + Bearer API_SECRET (service)
 ```
 
-**The answer is distribution.** The best product with no distribution loses to a mediocre product with great distribution. Every time.
-
-| Channel | Cost | Timeline | You Own It? |
-|---------|------|----------|-------------|
-| Google Ads | $5-50/click | Immediate | ❌ Rented |
-| SEO (new domain) | $0 | 12-24 months | ✅ But slow |
-| Content marketing | $500-5K/article | 6-12 months | ✅ But expensive |
-| **Expired domain network** | **$10-50/domain** | **2-8 weeks** | **✅ Owned forever** |
-
-Expired domains come with backlinks, aged trust, and sometimes traffic. They're distribution infrastructure hiding in plain sight.
+**Key services:**
+- **Worker API** — auth, domains, marketplace, admin, community, blog, CZDS, scoring, jobs
+- **D1 Database** — domains, market_sales, curated_content, community_users, scoring_weights, bulk_jobs, alerts, score_history
+- **R2 Bucket** — CZDS zone file snapshots (100-200MB per TLD per day)
+- **GitHub Actions** — CZDS download, zone diff, domain scoring, RDAP verification, bulk upload
 
 ---
 
-## What is EyeCX?
+## Data Signals (7)
 
-EyeCX ingests 23M+ domains daily from ICANN CZDS zone files and identifies high-value distribution assets as they drop. Pipeline is live, screening .xyz, .info, and .org zones daily.
-
-**This isn't domain flipping.** This is building permanent distribution channels for your products.
+| Signal | Source | What it measures |
+|--------|--------|-----------------|
+| CZDS zone drops | ICANN zone files (.xyz, .info, .org + dynamic) | Domain removed from zone = potentially available |
+| Wayback Machine | web.archive.org CDX API | Historical content, domain age |
+| OpenPageRank | openpagerank.com API | Backlink authority (0-10) |
+| RDAP | rdap.org | Registration status (available/registered) |
+| Cloudflare Registrar | CF API | Purchase price, premium status |
+| Brandability | Local dictionary + rules | Length, pronounceability, dictionary match |
+| Market comparables | Extracted from DNJournal, NamePros, DomainInvesting | Recent sale prices for similar domains |
 
 ---
 
-## Five Distribution Strategies
-
-### 1. Micro-Site Network
-Own the content that leads to your product.
+## Pipeline Flow
 
 ```
-savemoneyguide.com → "How to budget" articles → Links to your budget app
-productivitytips.org → "Work from home" guides → Links to your SaaS tool
-```
+1 AM UTC    CZDS daily (GitHub Actions)
+            ├── Auth with ICANN CZDS
+            ├── Download zone files → R2 snapshots
+            └── Parse NS records → domain lists
 
-### 2. Keyword Domain Arbitrage
-Rank instantly for high-intent searches.
+3 AM UTC    Daily scan (GitHub Actions)
+            ├── Diff two most recent R2 snapshots per TLD
+            ├── Score dropped domains (brandability + history)
+            ├── Upload qualified domains via POST /api/domains/bulk
+            ├── RDAP verify from GH runner → POST /api/domains/verify-update
+            └── Only availability_status='available' shown publicly
 
-```
-besttimetracker.com → Ranks for "best time tracker"
-freetaskapp.io → Ranks for "free task app"
-```
+4 AM UTC    Nightly rescore (Worker cron)
+            ├── Precompute market_sales aggregates per TLD
+            ├── Apply similarity_bonus + feedback_bonus
+            ├── Log changes to score_history
+            └── Compute price predictions from comparables
 
-### 3. Authority Redirect Network
-Transfer link equity to boost your main domain.
+5 AM UTC    Self-tuning (Worker cron)
+            ├── Compare signal presence in high vs low price sales
+            ├── Adjust scoring_weights with 15% shrinkage
+            └── Min 20 sales per TLD to tune
 
-```
-oldtechblog.com (DA 35) → 301 redirect → yourapp.com
-```
-
-### 4. Audience Pre-Building
-Build an email list before you launch.
-
-```
-designresources.com → 15,000 subscribers → Launch your design tool
-```
-
-### 5. Comparison & Review Sites
-Control the narrative when users compare options.
-
-```
-notionalternatives.com → "Top 10 Notion alternatives" (you're #1)
+Every 6h    RSS curation + sales extraction (Worker cron)
+            ├── Fetch 29 RSS/Atom feeds
+            ├── Classify into categories (sale-report, analysis, etc.)
+            ├── Extract domain sale prices via regex
+            └── Feed into market_sales for rescore loop
 ```
 
 ---
 
-## The Math (illustrative projection)
+## Adding a New TLD
 
-**Without distribution network:**
-```
-Google Ads: $10/click, 2% conversion
-Cost per customer: $500
-LTV: $290
-Result: Losing money ❌
-```
+When ICANN approves a new CZDS zone:
 
-**With 12-domain network (projected):**
+1. The `czds-daily.yml` discover job automatically detects it via `/czds/downloads/links`
+2. Zone file downloads, parses, and uploads snapshot to R2
+3. `GET /api/tlds` returns it — frontend filters update automatically
+4. `daily-scan.yml` discovers it from R2 and includes it in diffs
+5. Scoring works immediately (unknown TLDs get +1 base, brandability applies)
+6. After 20+ sales accumulate, self-tuning adjusts weights for the TLD
+
+No code changes needed. The only manual step is ICANN approval.
+
+---
+
+## Scoring
+
+Each domain receives a score (0-100) from four components:
+
+**Base score (0-45):** PageRank (0-30) + Wayback snapshots (0-10) + domain age (0-15)
+
+**Brandability (0-55):** Length bonus (3-char=40, 4=30, 5=20, 6=12, 8=5) + no digits (+5) + no hyphens (+3) + pronounceability (+10) + dictionary word (+20). Weights loaded from `scoring_weights` table and are per-TLD tunable.
+
+**Similarity bonus (0-20):** `LOG(avg_sale_price_for_TLD / 100) * 5`. Precomputed from `market_sales`.
+
+**Feedback bonus (-10 to +15):** `(saved + bought*3 - dismissed) * 0.5` per TLD. Driven by admin actions.
+
+Scores are idempotent — two consecutive rescores with no new data produce zero changes.
+
+---
+
+## Price Prediction
+
+For domains with >=3 comparable sales (same TLD, name length +/-2 chars):
+
 ```
-Investment: $2,580 (domains + content)
-After 6 months: 750 clicks/month → 22 customers
-After 12 months: 45 customers/month
-Projected ROI: 6x in year one — actual results will vary
+predicted = MEDIAN(comps) * CLAMP(score/60, 0.5, 2.0)
+low       = P25(comps) * multiplier
+high      = P75(comps) * multiplier
+confidence = high (>=30 comps) | medium (>=10) | low (>=3) | insufficient (<3)
 ```
 
 ---
 
-## Our Live Portfolio
+## Admin Features
 
-Every domain found using EyeCX:
-
-| Domain | Type | Purpose |
-|--------|------|---------|
-| doomticker.com | Prime | Threat intelligence platform |
-| intelflag.com | Prime | Geopolitical simulation |
-| flxgate.com | Prime | AI monetization gateway |
-| lordsguide.com | Prime | Faith platform |
-| 5sprints.com | Product | Chrome extension |
-| clawsap.com | Product | SaaS platform |
-| eyecx.com | Meta | This distribution engine |
-
-**+ Partner portfolio: 20+ domains across 10 niches**
+- **Domains tab** — filter/sort, check availability, save/dismiss feedback, run scan, verify batch
+- **Curated tab** — RSS feeds, quality scores, category filter, hide, fetch now
+- **Sales Intel** — extracted sale prices, top 10, TLD breakdown
+- **Movers** — top score risers/fallers over configurable window
+- **Tuning** — scoring weights matrix, self-tune trigger, reset
+- **Jobs** — bulk job queue (RDAP re-verify, rescore, sales re-extract, QA audit, asset audit)
+- **Content Stats** — volume charts, source health, quality distribution
+- **Sources** — health dashboard, auto-discovery candidates, enable/disable
+- **Threads** — community moderation, hide threads/comments
+- **Marketplace** — public domain browse with price predictions
 
 ---
 
-## How It Works
-
-```
-Screen → Score → Acquire → Deploy → Connect
-```
-
-1. **Screen** — 23M+ domains daily from ICANN CZDS zone files
-2. **Score** — 6-factor scoring + distribution relevance
-3. **Acquire** — Auto-purchase via Cloudflare Registrar
-4. **Deploy** — Landing pages, micro-sites, or redirects
-5. **Connect** — Internal links, email capture, product CTAs
-
----
-
-## Subscription Tiers
-
-Available after Day 60 (June 15, 2026).
-
-| Plan | Price | Domains/Day | Best For |
-|------|-------|-------------|----------|
-| **Basic** | $19/mo | 50 | Side project distribution |
-| **Standard** | $49/mo | 200 | Startup distribution network |
-| **Premium** | $99/mo | 500 | Agency/portfolio scale |
-
----
-
-## Quick Start
+## Local Development
 
 ```bash
 git clone https://github.com/kjssamsungdev-max/eyecx
 cd eyecx
 
-# Map your products to distribution needs
-# Run pipeline with distribution-focused seeds
-python eyecx.py --seeds seeds-distribution.txt
+# Worker
+cd worker && npx wrangler dev
 
-# Deploy your network
-npx wrangler pages deploy . --project-name eyecx
+# Deploy
+npx wrangler deploy                              # Worker
+npx wrangler pages deploy . --project-name eyecx # Pages
 ```
 
----
+**Secrets (set via `npx wrangler secret put`):**
+API_SECRET, RESEND_API_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, CZDS_USERNAME, CZDS_PASSWORD, GITHUB_TOKEN
 
-## Documentation
-
-- **[DISTRIBUTION_ENGINE.md](DISTRIBUTION_ENGINE.md)** — Full distribution playbook
-- **[ACQUISITION_STRATEGY.md](ACQUISITION_STRATEGY.md)** — 120-domain acquisition plan  
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** — Technical deployment guide
-- **[COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md)** — Market positioning
+**GitHub Secrets:**
+EYECX_API_SECRET, CZDS_USERNAME, CZDS_PASSWORD, CLOUDFLARE_ACCOUNT_ID, OPENPAGERANK_API_KEY, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 
 ---
 
 ## Contact
 
-- **Website**: https://eyecx.com
+- **Website**: [eyecx.com](https://eyecx.com)
 - **Email**: hello@eyecx.com
 - **Built by**: [KJS Productions](https://kjs.productions)
-
----
-
-**Stop renting attention. Start owning distribution.**
-
-*"Stop renting attention. Start owning distribution."*
