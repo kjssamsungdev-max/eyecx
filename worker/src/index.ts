@@ -525,6 +525,14 @@ export default {
     }
 
     // POST /api/admin/rescore - Reweighted domain scoring
+    // POST /api/admin/price/recompute - Compute price predictions
+    if (path === '/api/admin/price/recompute' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const result = await runPriceComputation(env);
+      return json(result);
+    }
+
     if (path === '/api/admin/rescore' && request.method === 'POST') {
       const [user, err] = await requireAdmin(request, env);
       if (err) return err;
@@ -1288,7 +1296,8 @@ async function getDomains(url: URL, env: Env): Promise<Response> {
     SELECT domain, tld, potential_score, tier, estimated_flip_value,
            page_rank, wayback_snapshots, estimated_age_years, backlinks,
            majestic_rank, tranco_rank, availability_status, first_seen,
-           score_version, last_rescored_at, brand_score
+           score_version, last_rescored_at, brand_score,
+           predicted_price_usd, price_low_usd, price_high_usd, price_confidence, price_comps_count
     FROM domains
     WHERE potential_score >= ?
   `;
@@ -2691,6 +2700,78 @@ async function runSelfTuning(env: Env): Promise<{
     changes: totalChanges,
     details,
   };
+}
+
+// ============ PRICE PREDICTION ============
+
+interface PricePrediction {
+  predicted: number | null;
+  low: number | null;
+  high: number | null;
+  confidence: string;
+  comps_count: number;
+}
+
+function computePricePrediction(comps: number[], score: number): PricePrediction {
+  if (comps.length < 3) return { predicted: null, low: null, high: null, confidence: 'insufficient_data', comps_count: comps.length };
+
+  const sorted = comps.slice().sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const p25 = sorted[Math.floor(sorted.length * 0.25)];
+  const p75 = sorted[Math.floor(sorted.length * 0.75)];
+
+  const mult = Math.max(0.5, Math.min(2.0, score / 60));
+  const confidence = comps.length >= 30 ? 'high' : comps.length >= 10 ? 'medium' : 'low';
+
+  return {
+    predicted: Math.round(median * mult),
+    low: Math.round(p25 * mult),
+    high: Math.round(p75 * mult),
+    confidence,
+    comps_count: comps.length,
+  };
+}
+
+async function runPriceComputation(env: Env): Promise<{ total: number; predicted: number; insufficient: number }> {
+  // Precompute comps by TLD + length bucket
+  const allSales = await env.DB.prepare(
+    'SELECT domain, tld, sale_price_usd FROM market_sales'
+  ).all<{ domain: string; tld: string; sale_price_usd: number }>();
+
+  // Build lookup: tld -> { length -> prices[] }
+  const compIndex: Record<string, Record<number, number[]>> = {};
+  for (const s of (allSales.results || [])) {
+    const nameLen = s.domain.split('.')[0].length;
+    if (!compIndex[s.tld]) compIndex[s.tld] = {};
+    for (let l = Math.max(1, nameLen - 2); l <= nameLen + 2; l++) {
+      if (!compIndex[s.tld][l]) compIndex[s.tld][l] = [];
+      compIndex[s.tld][l].push(s.sale_price_usd);
+    }
+  }
+
+  const domains = await env.DB.prepare(
+    'SELECT domain, tld, potential_score FROM domains LIMIT 50000'
+  ).all<{ domain: string; tld: string; potential_score: number }>();
+
+  let total = 0, predicted = 0, insufficient = 0;
+
+  for (const d of (domains.results || [])) {
+    total++;
+    const nameLen = d.domain.split('.')[0].length;
+    const comps = compIndex[d.tld]?.[nameLen] || [];
+    const pred = computePricePrediction(comps, d.potential_score);
+
+    if (pred.predicted !== null) predicted++;
+    else insufficient++;
+
+    await env.DB.prepare(
+      `UPDATE domains SET predicted_price_usd = ?, price_low_usd = ?, price_high_usd = ?,
+       price_confidence = ?, price_comps_count = ?, price_computed_at = datetime('now')
+       WHERE domain = ?`
+    ).bind(pred.predicted, pred.low, pred.high, pred.confidence, pred.comps_count, d.domain).run();
+  }
+
+  return { total, predicted, insufficient };
 }
 
 // ============ DOMAIN RESCORE ============
