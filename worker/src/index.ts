@@ -1130,6 +1130,144 @@ export default {
       return json({ checked, available, registered, remaining: domains.length - checked });
     }
 
+    // ============ /v1 PUBLIC API ============
+    if (path.startsWith('/v1/')) {
+      if (request.method === 'OPTIONS') return new Response(null, { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key' } });
+
+      const apiKey = await authenticateApiKey(request, env);
+      if (!apiKey) return apiError('API key required. Set X-API-Key header.', 401);
+
+      const withinLimit = await checkRateLimit(env, apiKey.id, apiKey.rate_limit_per_hour);
+      if (!withinLimit) {
+        await logApiUsage(env, apiKey.id, path, 429);
+        return apiError('Rate limit exceeded', 429, { limit: apiKey.rate_limit_per_hour, window: '1h' });
+      }
+
+      let resp: Response;
+
+      if (path === '/v1/domains' && request.method === 'GET') {
+        const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+        const offset = parseInt(url.searchParams.get('offset') || '0');
+        const tier = url.searchParams.get('tier');
+        const tld = url.searchParams.get('tld');
+        const minScore = parseInt(url.searchParams.get('min_score') || '0');
+        const search = url.searchParams.get('search');
+
+        let q = "SELECT domain, tld, potential_score, tier, estimated_flip_value, wayback_snapshots, estimated_age_years, availability_status, brand_score, predicted_price_usd, price_confidence, first_seen FROM domains WHERE potential_score >= ? AND availability_status = 'available'";
+        const p: any[] = [minScore];
+        if (tier) { q += ' AND tier = ?'; p.push(tier); }
+        if (tld) { q += ' AND tld = ?'; p.push(tld); }
+        if (search && search.length >= 2) { q += ' AND domain LIKE ?'; p.push(`%${search}%`); }
+        q += ' ORDER BY potential_score DESC LIMIT ? OFFSET ?';
+        p.push(limit, offset);
+
+        const result = await env.DB.prepare(q).bind(...p).all();
+        const total = await env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE potential_score >= ? AND availability_status = 'available'").bind(minScore).first<{c:number}>();
+        resp = apiResponse(result.results || [], { limit, offset, total: total?.c || 0 });
+
+      } else if (path.match(/^\/v1\/domains\/[^/]+$/) && request.method === 'GET') {
+        const domain = path.split('/')[3];
+        const row = await env.DB.prepare(
+          "SELECT domain, tld, potential_score, tier, estimated_flip_value, wayback_snapshots, estimated_age_years, availability_status, brand_score, predicted_price_usd, price_low_usd, price_high_usd, price_confidence, price_comps_count, first_seen FROM domains WHERE domain = ? AND availability_status = 'available'"
+        ).bind(domain).first();
+        resp = row ? apiResponse(row) : apiError('Domain not found', 404);
+
+      } else if (path === '/v1/sales' && request.method === 'GET') {
+        const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+        const offset = parseInt(url.searchParams.get('offset') || '0');
+        const tld = url.searchParams.get('tld');
+        let q = 'SELECT domain, tld, sale_price_usd, source_name, extracted_at FROM market_sales';
+        const p: any[] = [];
+        if (tld) { q += ' WHERE tld = ?'; p.push(tld); }
+        q += ' ORDER BY sale_price_usd DESC LIMIT ? OFFSET ?';
+        p.push(limit, offset);
+        const result = await env.DB.prepare(q).bind(...p).all();
+        const total = await env.DB.prepare('SELECT COUNT(*) as c FROM market_sales').first<{c:number}>();
+        resp = apiResponse(result.results || [], { limit, offset, total: total?.c || 0 });
+
+      } else if (path === '/v1/tlds' && request.method === 'GET') {
+        const listed = await env.ZONES.list({ prefix: 'snapshots/', delimiter: '/' });
+        const tlds = (listed.delimitedPrefixes || []).map((p: string) => '.' + p.replace('snapshots/', '').replace('/', '')).filter((t: string) => t.length > 1).sort();
+        resp = apiResponse(tlds);
+
+      } else if (path === '/v1/stats' && request.method === 'GET') {
+        const domains = await env.DB.prepare("SELECT COUNT(*) as total, SUM(CASE WHEN tier='diamond' THEN 1 ELSE 0 END) as diamonds, SUM(CASE WHEN tier='gold' THEN 1 ELSE 0 END) as golds FROM domains WHERE availability_status = 'available'").first();
+        const byTld = await env.DB.prepare("SELECT tld, COUNT(*) as c FROM domains WHERE availability_status = 'available' GROUP BY tld").all();
+        const sales = await env.DB.prepare('SELECT COUNT(*) as c FROM market_sales').first<{c:number}>();
+        resp = apiResponse({ total_domains: (domains as any)?.total || 0, diamonds: (domains as any)?.diamonds || 0, golds: (domains as any)?.golds || 0, by_tld: byTld.results || [], total_sales: sales?.c || 0 });
+
+      } else {
+        resp = apiError('Not found', 404);
+      }
+
+      await logApiUsage(env, apiKey.id, path, resp.status);
+      return resp;
+    }
+
+    // ============ ADMIN API KEY MANAGEMENT ============
+
+    // POST /api/admin/api-keys/create - Generate new API key
+    if (path === '/api/admin/api-keys/create' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const { label, owner_email, tier } = await request.json() as { label: string; owner_email: string; tier?: string };
+      if (!label || !owner_email) return error('label and owner_email required');
+
+      const rawKey = generateApiKey();
+      const keyHash = await hashApiKey(rawKey);
+      const prefix = rawKey.slice(0, 16) + '...';
+
+      await env.DB.prepare(
+        'INSERT INTO api_keys (key_hash, key_prefix, label, owner_email, tier) VALUES (?, ?, ?, ?, ?)'
+      ).bind(keyHash, prefix, label, owner_email, tier || 'free').run();
+
+      return json({ key: rawKey, prefix, label, tier: tier || 'free', warning: 'This key is shown once. Save it now.' });
+    }
+
+    // GET /api/admin/api-keys - List keys
+    if (path === '/api/admin/api-keys' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const keys = await env.DB.prepare(
+        'SELECT id, key_prefix, label, owner_email, tier, rate_limit_per_hour, active, created_at, last_used_at, total_requests FROM api_keys ORDER BY created_at DESC'
+      ).all();
+      return json({ keys: keys.results || [] });
+    }
+
+    // POST /api/admin/api-keys/:id/revoke
+    if (path.match(/^\/api\/admin\/api-keys\/\d+\/revoke$/) && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[4]);
+      await env.DB.prepare('UPDATE api_keys SET active = 0 WHERE id = ?').bind(id).run();
+      return json({ ok: true, id, revoked: true });
+    }
+
+    // GET /api/admin/api-keys/:id/usage - Usage per key
+    if (path.match(/^\/api\/admin\/api-keys\/\d+\/usage$/) && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const id = parseInt(path.split('/')[4]);
+      const daily = await env.DB.prepare(
+        "SELECT date(ts) as d, COUNT(*) as c FROM api_usage WHERE key_id = ? AND ts > datetime('now', '-30 days') GROUP BY d ORDER BY d ASC"
+      ).bind(id).all();
+      const hourly = await env.DB.prepare(
+        "SELECT COUNT(*) as c FROM api_usage WHERE key_id = ? AND ts > datetime('now', '-1 hour')"
+      ).bind(id).first<{c:number}>();
+      return json({ daily: daily.results || [], current_hour: hourly?.c || 0 });
+    }
+
+    // POST /api/public/api-keys/request - Public key request
+    if (path === '/api/public/api-keys/request' && request.method === 'POST') {
+      const { email, intended_use } = await request.json() as { email: string; intended_use: string };
+      if (!email || !intended_use) return error('email and intended_use required');
+      if (env.RESEND_API_KEY) {
+        await sendEmail(env, 'admin@eyecx.com', 'API Key Request',
+          `<h3>New API key request</h3><p>Email: ${email}</p><p>Use: ${intended_use}</p>`);
+      }
+      return json({ ok: true, message: 'Request submitted. You will receive your key via email.' });
+    }
+
     // GET /api/tlds - Active TLDs (derived from R2 snapshots)
     if (path === '/api/tlds' && request.method === 'GET') {
       const listed = await env.ZONES.list({ prefix: 'snapshots/', delimiter: '/' });
@@ -2947,6 +3085,74 @@ async function runDomainRescore(env: Env): Promise<{
     top_risers: deltas.slice(0, 10),
     top_fallers: deltas.slice(-10).reverse(),
   };
+}
+
+// ============ PUBLIC API KEY AUTH ============
+
+async function hashApiKey(key: string): Promise<string> {
+  const data = new TextEncoder().encode(key);
+  return toHex(await crypto.subtle.digest('SHA-256', data));
+}
+
+function generateApiKey(): string {
+  return 'eyecx_live_' + toHex(crypto.getRandomValues(new Uint8Array(16)).buffer);
+}
+
+interface ApiKeyRecord { id: number; tier: string; rate_limit_per_hour: number; label: string; }
+
+async function authenticateApiKey(request: Request, env: Env): Promise<ApiKeyRecord | null> {
+  const key = request.headers.get('X-API-Key');
+  if (!key || !key.startsWith('eyecx_live_')) return null;
+
+  const hash = await hashApiKey(key);
+  const record = await env.DB.prepare(
+    'SELECT id, tier, rate_limit_per_hour, label FROM api_keys WHERE key_hash = ? AND active = 1'
+  ).bind(hash).first<ApiKeyRecord>();
+  if (!record) return null;
+
+  // Update last_used + total (fire-and-forget)
+  env.DB.prepare(
+    "UPDATE api_keys SET last_used_at = datetime('now'), total_requests = total_requests + 1 WHERE id = ?"
+  ).bind(record.id).run();
+
+  return record;
+}
+
+async function checkRateLimit(env: Env, keyId: number, limit: number): Promise<boolean> {
+  const count = await env.DB.prepare(
+    "SELECT COUNT(*) as c FROM api_usage WHERE key_id = ? AND ts > datetime('now', '-1 hour')"
+  ).bind(keyId).first<{ c: number }>();
+  return (count?.c || 0) < limit;
+}
+
+async function logApiUsage(env: Env, keyId: number, endpoint: string, status: number): Promise<void> {
+  try {
+    await env.DB.prepare(
+      'INSERT INTO api_usage (key_id, endpoint, status_code) VALUES (?, ?, ?)'
+    ).bind(keyId, endpoint, status).run();
+  } catch {}
+}
+
+function apiResponse(data: any, meta?: any, status = 200): Response {
+  return new Response(JSON.stringify({ data, meta: meta || {} }), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+    },
+  });
+}
+
+function apiError(message: string, status = 400, extra?: any): Response {
+  return new Response(JSON.stringify({ error: message, ...extra }), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      ...(status === 429 ? { 'Retry-After': '3600' } : {}),
+    },
+  });
 }
 
 // ============ INGEST GATES ============

@@ -191,6 +191,32 @@ CREATE TABLE IF NOT EXISTS source_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_candidates_status ON source_candidates(status);
 
+-- Public API keys
+CREATE TABLE IF NOT EXISTS api_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_hash TEXT UNIQUE NOT NULL,
+    key_prefix TEXT NOT NULL,
+    label TEXT NOT NULL,
+    owner_email TEXT NOT NULL,
+    tier TEXT NOT NULL DEFAULT 'free',
+    rate_limit_per_hour INTEGER NOT NULL DEFAULT 100,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT,
+    total_requests INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_keys_hash ON api_keys(key_hash);
+
+-- API usage tracking
+CREATE TABLE IF NOT EXISTS api_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_id INTEGER NOT NULL,
+    endpoint TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    ts TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON api_usage(key_id, ts DESC);
+
 -- Bulk job queue
 CREATE TABLE IF NOT EXISTS bulk_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
