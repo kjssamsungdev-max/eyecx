@@ -43,7 +43,13 @@ MAX_LOG_INTERVAL = 1_000_000       # log progress every N lines
 MAX_DOWNLOAD_CHUNK = 1024 * 1024   # 1 MB streaming chunks
 MAX_AUTH_ATTEMPTS = 3
 MAX_DOWNLOAD_TIMEOUT_SEC = 7200    # 2 hours for multi-GB files
-SUPPORTED_TLDS = frozenset({"xyz", "com", "net", "org", "info", "biz"})
+# Expanded to accept any ICANN gTLD zone file
+SUPPORTED_TLDS = frozenset({
+    "xyz", "com", "net", "org", "info", "biz",
+    "app", "dev", "io", "co", "me", "ai", "tv", "cc",
+    "club", "online", "site", "store", "tech", "top", "icu",
+    "link", "click", "help", "pro", "live", "space", "fun",
+})
 SNAPSHOT_DIR = "./zone_snapshots"
 MAX_R2_UPLOAD_TIMEOUT = 120  # seconds
 

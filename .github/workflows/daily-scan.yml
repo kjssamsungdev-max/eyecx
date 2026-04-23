@@ -84,7 +84,16 @@ jobs:
           DROPPED_FILE="dropped/all_dropped_${NEWER}.txt"
           > "$DROPPED_FILE"
 
-          for TLD in xyz info org; do
+          # Discover TLDs dynamically from R2 snapshots
+          TLDS=$(curl -s "$EYECX_API_URL/api/tlds" -H "User-Agent: EyeCX-Scan" | python3 -c "
+          import sys,json
+          tlds = json.load(sys.stdin).get('tlds',[])
+          print(' '.join(t.lstrip('.') for t in tlds))
+          " 2>/dev/null)
+          if [ -z "$TLDS" ]; then TLDS="xyz info org"; fi
+          echo "TLDs to diff: $TLDS"
+
+          for TLD in $TLDS; do
             OKEY="snapshots/${TLD}/${TLD}_${OLDER}.domains.txt"
             NKEY="snapshots/${TLD}/${TLD}_${NEWER}.domains.txt"
 

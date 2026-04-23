@@ -839,7 +839,7 @@
         <section class="stats">
             <div class="container" style="display: contents;">
                 <div class="stat"><div class="stat-value">23M+</div><div class="stat-label">Domains screened daily</div></div>
-                <div class="stat"><div class="stat-value">3</div><div class="stat-label">CZDS zones live (.xyz .info .org)</div></div>
+                <div class="stat"><div class="stat-value" id="czds-zone-count">3</div><div class="stat-label" id="czds-zone-label">CZDS zones live</div></div>
                 <div class="stat"><div class="stat-value">RDAP</div><div class="stat-label">Verified availability</div></div>
                 <div class="stat"><div class="stat-value">$10-50</div><div class="stat-label">Per domain (owned forever)</div></div>
             </div>
@@ -1219,7 +1219,7 @@
                     title="Scoring signals:&#10;1. CZDS zone file drops (daily diff)&#10;2. Wayback Machine history (snapshots + age)&#10;3. OpenPageRank (backlink authority)&#10;4. RDAP availability verification&#10;5. Cloudflare Registrar pricing&#10;6. Brandability (length, dictionary, pronounceability)&#10;7. Market sale comparables (DNJournal, NamePros)">?</span>
             </h2>
             <p style="color:var(--muted);margin-bottom:16px;">Daily dropped domains, scored on history + market + brandability signals.</p>
-            <p style="color:var(--border);font-size:0.8rem;margin-bottom:24px;">Data: ICANN zone files (.xyz .info .org) + Wayback Machine + RDAP + OpenPageRank + Cloudflare Registrar. Sale comparables from DNJournal, NamePros, DomainInvesting.</p>
+            <p style="color:var(--border);font-size:0.8rem;margin-bottom:24px;" id="mp-data-sources">Data: ICANN zone files + Wayback Machine + RDAP + OpenPageRank + Cloudflare Registrar. Sale comparables from DNJournal, NamePros, DomainInvesting.</p>
             <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
                 <select id="mp-tier" class="form-input" style="width:auto;padding:8px 12px;">
                     <option value="">All tiers</option>
@@ -1228,8 +1228,6 @@
                 </select>
                 <select id="mp-tld" class="form-input" style="width:auto;padding:8px 12px;">
                     <option value="">All TLDs</option>
-                    <option value=".xyz">.xyz</option><option value=".info">.info</option>
-                    <option value=".org">.org</option>
                 </select>
                 <input id="mp-score" class="form-input" style="width:80px;padding:8px 12px;" type="number" min="0" max="100" placeholder="Min score" value="0">
                 <input id="mp-search" class="form-input" style="width:180px;padding:8px 12px;" type="text" placeholder="Search domain...">
@@ -2164,8 +2162,6 @@
                 </select>
                 <select id="f-tld" class="form-input" style="width:auto;padding:8px 12px;">
                     <option value="">All TLDs</option>
-                    <option value=".xyz">.xyz</option><option value=".info">.info</option>
-                    <option value=".org">.org</option>
                 </select>
                 <input id="f-score" class="form-input" style="width:80px;padding:8px 12px;" type="number" min="0" max="100" placeholder="Min score" value="${domainFilters.min_score}">
                 <button class="btn btn-primary" style="padding:8px 16px;" onclick="applyDomainFilters()">Filter</button>
@@ -2741,6 +2737,29 @@
     setInterval(updateCountdown, 60000);
     checkAuth();
     route();
+
+    // Load active TLDs for filter dropdowns + stats
+    fetch(`${API}/api/tlds`).then(r => r.json()).then(d => {
+        const tlds = d.tlds || [];
+        // Populate all TLD dropdowns
+        for (const selId of ['mp-tld', 'f-tld']) {
+            const sel = document.getElementById(selId);
+            if (!sel) continue;
+            for (const tld of tlds) {
+                const opt = document.createElement('option');
+                opt.value = tld; opt.textContent = tld;
+                sel.appendChild(opt);
+            }
+        }
+        // Update landing page stats
+        const countEl = document.getElementById('czds-zone-count');
+        const labelEl = document.getElementById('czds-zone-label');
+        if (countEl) countEl.textContent = tlds.length;
+        if (labelEl) labelEl.textContent = `CZDS zones (${tlds.join(' ')})`;
+        // Update data sources strip
+        const srcEl = document.getElementById('mp-data-sources');
+        if (srcEl) srcEl.textContent = `Data: ICANN zone files (${tlds.join(' ')}) + Wayback Machine + RDAP + OpenPageRank + Cloudflare Registrar. Sale comparables from DNJournal, NamePros, DomainInvesting.`;
+    }).catch(() => {});
     </script>
 </body>
 </html>

@@ -179,7 +179,9 @@ async function sendEmail(env: Env, to: string, subject: string, html: string): P
 }
 
 // Target TLDs to download from CZDS
-const CZDS_TLDS = ['xyz', 'info', 'biz', 'net', 'org'];
+// CZDS target TLDs — expanded to accept any new CZDS approvals
+// The discover job in czds-daily.yml dynamically filters to approved-only
+const CZDS_TLDS = ['xyz', 'info', 'biz', 'net', 'org', 'com', 'app', 'dev', 'io', 'co', 'me', 'ai', 'tv', 'cc'];
 
 // Main handler
 export default {
@@ -1085,6 +1087,16 @@ export default {
       }
 
       return json({ checked, available, registered, remaining: domains.length - checked });
+    }
+
+    // GET /api/tlds - Active TLDs (derived from R2 snapshots)
+    if (path === '/api/tlds' && request.method === 'GET') {
+      const listed = await env.ZONES.list({ prefix: 'snapshots/', delimiter: '/' });
+      const tlds = (listed.delimitedPrefixes || [])
+        .map((p: string) => '.' + p.replace('snapshots/', '').replace('/', ''))
+        .filter((t: string) => t.length > 1)
+        .sort();
+      return json({ tlds });
     }
 
     // ============ PUBLIC DOMAIN LISTING (marketplace) ============

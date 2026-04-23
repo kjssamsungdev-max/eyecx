@@ -361,9 +361,14 @@ def calculate_score(pr, snapshots, age_years, tld, domain=None):
         elif age_years >= 3: score += 6
         elif age_years >= 1: score += 3
 
-    if tld in ('.com', '.io', '.ai'): score += 5
-    elif tld in ('.co', '.app', '.dev'): score += 3
-    elif tld in ('.xyz', '.info', '.org'): score += 2
+    # TLD value tiers (extensible — new TLDs get standard bonus)
+    TLD_PREMIUM = {'.com', '.io', '.ai'}
+    TLD_MID = {'.co', '.app', '.dev', '.me'}
+    TLD_STANDARD = {'.xyz', '.info', '.org', '.net', '.biz', '.tv', '.cc', '.club', '.tech', '.online', '.pro', '.live', '.site', '.store'}
+    if tld in TLD_PREMIUM: score += 5
+    elif tld in TLD_MID: score += 3
+    elif tld in TLD_STANDARD: score += 2
+    else: score += 1  # Unknown TLD gets minimal bonus
 
     # Brandability bonus
     if domain:
