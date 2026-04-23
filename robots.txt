@@ -1,3 +1,14 @@
 User-agent: *
 Allow: /
+Allow: /marketplace
+Allow: /blog
+Allow: /community
+Allow: /docs
+Disallow: /admin
+Disallow: /login
+Disallow: /register
+Disallow: /api/admin/
+Disallow: /api/auth/
+Disallow: /v1/
+
 Sitemap: https://eyecx.com/sitemap.xml

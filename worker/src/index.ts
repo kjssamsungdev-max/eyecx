@@ -286,6 +286,17 @@ export default {
     const path = url.pathname;
 
     // Public endpoints (no auth)
+    // GET /api/sitemap-data - Data for sitemap generation
+    if (path === '/api/sitemap-data' && request.method === 'GET') {
+      const articles = await env.DB.prepare(
+        "SELECT slug, updated_at FROM articles WHERE status = 'published' LIMIT 1000"
+      ).all();
+      const curated = await env.DB.prepare(
+        "SELECT id, curated_at FROM curated_content WHERE status = 'published' AND hidden = 0 ORDER BY curated_at DESC LIMIT 5000"
+      ).all();
+      return json({ articles: articles.results || [], curated: curated.results || [] });
+    }
+
     if (path === '/api/health') {
       return json({ status: 'ok', timestamp: new Date().toISOString() });
     }

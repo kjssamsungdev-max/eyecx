@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EyeCX - Distribution Infrastructure for Developers</title>
-    <meta name="description" content="You don't have a product problem. You have a distribution problem. Build a domain network that drives traffic to your products.">
+    <title id="page-title">EyeCX — Drop Domain Intelligence</title>
+    <meta name="description" id="page-desc" content="Daily dropped domains, scored across 7 signals, priced against real market sales, verified available before you see them.">
+    <link rel="canonical" id="page-canonical" href="https://eyecx.com">
+    <meta name="google-site-verification" content="PLACEHOLDER_REPLACE_WITH_GSC_CODE">
     
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
@@ -13,8 +15,8 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
     
     <!-- Open Graph -->
-    <meta property="og:title" content="EyeCX - Distribution Infrastructure for Developers">
-    <meta property="og:description" content="Stop renting attention. Start owning distribution. Build a domain network in 60 days.">
+    <meta property="og:title" id="og-title" content="EyeCX — Drop Domain Intelligence">
+    <meta property="og:description" id="og-desc" content="Daily dropped domains, scored and verified. Priced against real market sales.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://eyecx.com">
     <meta property="og:image" content="https://eyecx.com/assets/og-image.png">
@@ -94,7 +96,6 @@
     <meta name="theme-color" content="#0a0a0f">
     <meta name="msapplication-TileColor" content="#0a0a0f">
     
-    <link rel="canonical" href="https://eyecx.com">
     <style>
         :root {
             --bg: #0a0a0f;
@@ -1173,10 +1174,32 @@
         route();
     }
 
+    function setPageMeta(title, desc, canonical) {
+        document.getElementById('page-title').textContent = title;
+        document.getElementById('page-desc')?.setAttribute('content', desc);
+        document.getElementById('page-canonical')?.setAttribute('href', canonical);
+        document.getElementById('og-title')?.setAttribute('content', title);
+        document.getElementById('og-desc')?.setAttribute('content', desc);
+    }
+
     function route() {
         const path = location.pathname;
         const landing = document.querySelector('main');
         const footer = document.querySelector('footer');
+
+        // Update SEO meta per route
+        const base = 'https://eyecx.com';
+        if (path === '/' || path === '') {
+            setPageMeta('EyeCX — Drop Domain Intelligence', 'Daily dropped domains, scored across 7 signals, priced against real market sales, verified available.', base);
+        } else if (path === '/marketplace') {
+            setPageMeta('Available Dropped Domains — EyeCX', 'Browse RDAP-verified dropped domains scored on history, brandability, and market comparables.', base + '/marketplace');
+        } else if (path === '/blog' || path.startsWith('/blog/')) {
+            setPageMeta('Domain Industry News — EyeCX', 'Curated domain industry news, sale reports, and market analysis.', base + path);
+        } else if (path === '/community') {
+            setPageMeta('Community — EyeCX', 'Domain investing discussion forum.', base + '/community');
+        } else if (path === '/docs') {
+            setPageMeta('API Documentation — EyeCX', 'EyeCX public API: domains, sales, TLDs, stats. Key-authenticated, rate-limited.', base + '/docs');
+        }
 
         // Hide all app views
         document.querySelectorAll('.app-view').forEach(v => v.classList.remove('active'));
@@ -2444,6 +2467,8 @@
         const a = await resp.json();
         const tags = (() => { try { return JSON.parse(a.tags || '[]'); } catch { return []; } })();
 
+        setPageMeta(`${a.title} — EyeCX`, (a.excerpt || a.title).slice(0, 160), `https://eyecx.com/blog/curated/${id}`);
+
         el.innerHTML = `
             <a href="/blog" class="back-link">&larr; Back to blog</a>
             <h2>${a.title}</h2>
@@ -2481,6 +2506,9 @@
             .replace(/\n\n/g, '</p><p>')
             .replace(/\n/g, '<br>');
 
+        // Update page meta for this article
+        setPageMeta(`${a.title} — EyeCX`, (a.excerpt || a.title).slice(0, 160), `https://eyecx.com/blog/${slug}`);
+
         el.innerHTML = `
             <a href="/blog" class="back-link">&larr; Back to blog</a>
             <h2>${a.title}</h2>
@@ -2489,6 +2517,21 @@
                 <span>${a.views} views</span><span>${a.published_at?.slice(0,10)||''}</span>
             </div>
             <div class="card-body"><p>${rendered}</p></div>`;
+
+        // Inject Article JSON-LD
+        const existingLd = document.getElementById('article-jsonld');
+        if (existingLd) existingLd.remove();
+        const ldScript = document.createElement('script');
+        ldScript.type = 'application/ld+json';
+        ldScript.id = 'article-jsonld';
+        ldScript.textContent = JSON.stringify({
+            '@context': 'https://schema.org', '@type': 'Article',
+            headline: a.title, datePublished: a.published_at,
+            author: { '@type': 'Organization', name: 'EyeCX' },
+            publisher: { '@type': 'Organization', name: 'EyeCX', logo: { '@type': 'ImageObject', url: 'https://eyecx.com/assets/og-image.png' } },
+            image: 'https://eyecx.com/assets/og-image.png',
+        });
+        document.head.appendChild(ldScript);
     }
 
     // ============ DOCS ============
