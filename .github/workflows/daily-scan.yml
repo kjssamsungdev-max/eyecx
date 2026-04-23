@@ -315,6 +315,27 @@ jobs:
           path: results/*.csv
           retention-days: 30
 
+      - name: Alert on zero results
+        if: always()
+        env:
+          EYECX_API_URL: https://eyecx-api.kjssamsungdev.workers.dev
+          EYECX_API_SECRET: ${{ secrets.EYECX_API_SECRET }}
+        run: |
+          QUALIFIED="${{ steps.score.outputs.qualified || '0' }}"
+          if [ "$QUALIFIED" = "0" ]; then
+            # Check consecutive zero runs for severity escalation
+            echo "Scan produced 0 qualified domains — sending alert"
+            SEVERITY="warning"
+            # Would check history for consecutive zeros but keeping simple
+            curl -s -X POST "$EYECX_API_URL/api/admin/alerts" \
+              -H "Authorization: Bearer $EYECX_API_SECRET" \
+              -H "Content-Type: application/json" \
+              -H "User-Agent: EyeCX-Scan" \
+              -d "{\"type\":\"scan_empty\",\"severity\":\"$SEVERITY\",\"message\":\"Daily scan produced 0 qualified domains. Run: ${{ github.run_id }}. Commit: ${{ github.sha }}. Dropped: ${{ needs.diff-zones.outputs.total_dropped }}.\"}" || true
+          else
+            echo "Scan produced $QUALIFIED qualified domains — no alert needed"
+          fi
+
       - name: Report
         if: always()
         run: |

@@ -22,6 +22,7 @@ interface Env {
   CZDS_USERNAME: string;
   CZDS_PASSWORD: string;
   GITHUB_TOKEN: string;
+  SLACK_WEBHOOK_URL: string;
 }
 
 interface SessionUser {
@@ -747,6 +748,38 @@ export default {
         "UPDATE alerts SET resolved_at = datetime('now'), resolved_by = ? WHERE id = ?"
       ).bind(user!.id, id).run();
       return json({ ok: true, id, resolved: true });
+    }
+
+    // POST /api/admin/alerts/mute - Mute an alert type for 24h
+    if (path === '/api/admin/alerts/mute' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const { type } = await request.json() as { type: string };
+      if (!type) return error('type required');
+      const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      await env.DB.prepare(
+        "INSERT OR REPLACE INTO muted_alert_types (type, muted_by, expires_at) VALUES (?, ?, ?)"
+      ).bind(type, user!.id, expires).run();
+      return json({ ok: true, type, muted_until: expires });
+    }
+
+    // GET /api/admin/alerts/test - Send a synthetic test alert
+    if (path === '/api/admin/alerts/test' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const sent = await createAlert(env, 'test_alert', 'info', 'This is a test alert from EyeCX admin.');
+      return json({ ok: true, sent, message: sent ? 'Test alert created and sent' : 'Alert muted or already active' });
+    }
+
+    // POST /api/admin/alerts - Create alert (from workflows via Bearer auth)
+    if (path === '/api/admin/alerts' && request.method === 'POST') {
+      const sessionUser = await authenticateSession(request, env);
+      const bearerOk = authenticate(request, env);
+      if (!sessionUser && !bearerOk) return error('Auth required', 401);
+      const { type, severity, message: msg } = await request.json() as { type: string; severity: string; message: string };
+      if (!type || !msg) return error('type and message required');
+      const sent = await createAlert(env, type, severity || 'warning', msg);
+      return json({ ok: true, sent });
     }
 
     // GET /api/admin/sources/candidates - Source discovery candidates
@@ -2489,23 +2522,42 @@ async function runAlertCheck(env: Env): Promise<{ alerts_created: number }> {
   return { alerts_created: created };
 }
 
-async function createAlert(env: Env, type: string, severity: string, message: string): Promise<void> {
+async function createAlert(env: Env, type: string, severity: string, message: string): Promise<boolean> {
+  // Check if muted
+  const muted = await env.DB.prepare(
+    "SELECT type FROM muted_alert_types WHERE type = ? AND expires_at > datetime('now')"
+  ).bind(type).first();
+  if (muted) return false;
+
   // Dedupe: don't create if unresolved alert of same type exists
   const existing = await env.DB.prepare(
     'SELECT id FROM alerts WHERE type = ? AND resolved_at IS NULL'
   ).bind(type).first();
-  if (existing) return;
+  if (existing) return false;
 
   await env.DB.prepare(
     'INSERT INTO alerts (type, severity, message) VALUES (?, ?, ?)'
   ).bind(type, severity, message).run();
 
-  // Send email if RESEND_API_KEY is set
+  // Email via Resend
   if (env.RESEND_API_KEY) {
     await sendEmail(env, 'admin@eyecx.com', `EyeCX Alert: ${type}`,
       `<h3>${severity.toUpperCase()}: ${type}</h3><p>${message}</p><p><a href="https://eyecx.com/admin">View Dashboard</a></p>`
     );
   }
+
+  // Slack webhook
+  if (env.SLACK_WEBHOOK_URL) {
+    try {
+      await fetch(env.SLACK_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `[${severity.toUpperCase()}] ${type}: ${message}` }),
+      });
+    } catch {}
+  }
+
+  return true;
 }
 
 // ============ SOURCE AUTO-DISCOVERY ============

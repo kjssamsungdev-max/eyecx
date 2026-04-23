@@ -169,6 +169,14 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE INDEX IF NOT EXISTS idx_alerts_type ON alerts(type);
 CREATE INDEX IF NOT EXISTS idx_alerts_date ON alerts(triggered_at DESC);
 
+-- Alert muting
+CREATE TABLE IF NOT EXISTS muted_alert_types (
+    type TEXT PRIMARY KEY,
+    muted_by TEXT,
+    muted_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+);
+
 -- Source auto-discovery candidates
 CREATE TABLE IF NOT EXISTS source_candidates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

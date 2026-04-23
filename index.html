@@ -958,6 +958,7 @@
                 <button data-tab="admin-jobs">Jobs</button>
                 <button data-tab="admin-cstats">Content Stats</button>
                 <button data-tab="admin-sources">Sources</button>
+                <button data-tab="admin-alerts">Alerts</button>
                 <button data-tab="admin-threads">Threads</button>
                 <button data-tab="admin-waitlist">Waitlist</button>
             </div>
@@ -969,6 +970,7 @@
             <div id="admin-jobs" style="display:none;"></div>
             <div id="admin-cstats" style="display:none;"></div>
             <div id="admin-sources" style="display:none;"></div>
+            <div id="admin-alerts" style="display:none;"></div>
             <div id="admin-threads" style="display:none;"></div>
             <div id="admin-users" style="display:none;"></div>
             <div id="admin-content" style="display:none;"></div>
@@ -1287,7 +1289,7 @@
                 }">${fbMap[s]||0}</div><div class="lbl">${s}</div></div>`).join('');
 
         // Tab switching
-        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-jobs','admin-cstats','admin-sources','admin-threads','admin-users','admin-content','admin-waitlist'];
+        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-jobs','admin-cstats','admin-sources','admin-alerts','admin-threads','admin-users','admin-content','admin-waitlist'];
         document.querySelectorAll('#admin-tabs button').forEach(btn => {
             btn.onclick = () => {
                 document.querySelectorAll('#admin-tabs button').forEach(b => b.classList.remove('active'));
@@ -1329,6 +1331,7 @@
         await loadAdminContentStats();
         await loadAdminSources();
         await loadAdminAlertBanner();
+        await loadAdminAlerts();
         await loadAdminThreads();
     }
 
@@ -1872,6 +1875,69 @@
             document.getElementById('cand-' + id)?.remove();
             showToast('Candidate rejected', 'warning');
         } catch { showToast('Failed to reject', 'error'); }
+    }
+
+    // ============ ADMIN ALERTS TAB ============
+    async function loadAdminAlerts() {
+        const el = document.getElementById('admin-alerts');
+        el.innerHTML = '<p style="color:var(--muted)">Loading alerts...</p>';
+
+        const resp = await apiFetch('/api/admin/alerts');
+        const d = await resp.json();
+        const active = d.active || [];
+        const resolved = d.resolved || [];
+
+        const sevColor = { critical: '#dc2626', warning: '#d97706', info: 'var(--accent)' };
+
+        el.innerHTML = `
+            <div style="display:flex;gap:8px;margin-bottom:16px;">
+                <button class="vote-btn" id="test-alert-btn">Send test alert</button>
+                <span id="alert-tab-msg" style="color:var(--muted);font-size:0.9rem;"></span>
+            </div>
+            <h3 style="margin-bottom:12px;">Active (${active.length})</h3>
+            ${active.length ? active.map(a => `<div class="card" style="border-left:3px solid ${sevColor[a.severity]||'var(--muted)'};">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <span style="color:${sevColor[a.severity]};font-weight:600;text-transform:uppercase;font-size:0.8rem;">${a.severity}</span>
+                        <strong style="margin-left:8px;">${a.type}</strong>
+                        <span style="color:var(--muted);margin-left:8px;font-size:0.85rem;">${a.triggered_at?.slice(0,16)}</span>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="vote-btn" onclick="muteAlertType('${a.type}')">Mute 24h</button>
+                        <button class="vote-btn" onclick="resolveAlert(${a.id})">Resolve</button>
+                    </div>
+                </div>
+                <p style="margin-top:8px;color:var(--text);font-size:0.9rem;">${a.message}</p>
+            </div>`).join('') : '<p style="color:var(--muted)">No active alerts.</p>'}
+            <h3 style="margin:24px 0 12px;">Resolved (${resolved.length})</h3>
+            ${resolved.length ? resolved.map(a => `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.85rem;color:var(--muted);">
+                ${a.type} — ${a.message?.slice(0,80)} — resolved ${a.resolved_at?.slice(0,16)}
+            </div>`).join('') : '<p style="color:var(--muted)">No resolved alerts.</p>'}`;
+
+        document.getElementById('test-alert-btn').onclick = () => adminAction('test-alert-btn', 'alert-tab-msg', 'Sending test', async () => {
+            const r = await apiFetch('/api/admin/alerts/test');
+            const d = await r.json();
+            setTimeout(() => loadAdminAlerts(), 1000);
+            return d.sent ? 'Test alert sent (check email + Slack)' : 'Alert muted or already active';
+        });
+    }
+
+    async function resolveAlert(id) {
+        try {
+            await apiFetch(`/api/admin/alerts/${id}/resolve`, { method: 'POST' });
+            showToast('Alert resolved', 'success');
+            loadAdminAlerts();
+            loadAdminAlertBanner();
+        } catch { showToast('Failed to resolve', 'error'); }
+    }
+
+    async function muteAlertType(type) {
+        if (!confirm(`Mute "${type}" alerts for 24 hours?`)) return;
+        try {
+            await apiFetch('/api/admin/alerts/mute', { method: 'POST', body: JSON.stringify({ type }) });
+            showToast(`"${type}" muted for 24h`, 'warning');
+            loadAdminAlerts();
+        } catch { showToast('Failed to mute', 'error'); }
     }
 
     // ============ ADMIN THREADS TAB ============
