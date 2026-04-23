@@ -813,272 +813,80 @@
     </header>
 
     <main>
+        <!-- 1. HERO -->
         <section class="hero">
             <div class="container">
-                <div class="hero-badge">
-                    <span class="dot"></span>
-                    Screening 23M+ domains daily from ICANN CZDS zones
-                </div>
-                <h1>You don't have a product problem.<br>You have a <span class="gradient-text">distribution</span> problem.</h1>
-                <p class="hero-subtitle">Expired domains are distribution infrastructure hiding in plain sight. EyeCX ingests ICANN zone files daily to find high-value domains the moment they drop.</p>
+                <h1>Drop domains, priced and scored.</h1>
+                <p class="hero-subtitle">Daily feed of expiring domains. Scored across 7 signals. Priced against real market sales. Verified available before you see them.</p>
                 <div class="hero-cta">
-                    <a href="#waitlist" class="btn btn-primary">Join Waitlist →</a>
-                    <a href="#portfolio" class="btn btn-outline">See Our Network</a>
+                    <a href="/marketplace" class="btn btn-primary">Browse the marketplace</a>
+                    <a href="#waitlist" class="btn btn-outline">Get daily picks</a>
                 </div>
-                <div class="launch-countdown">
-                    <div class="countdown-label">Subscriptions open in</div>
-                    <div class="countdown-timer" id="countdown">
-                        <div class="countdown-unit"><span id="days">--</span><small>days</small></div>
-                        <div class="countdown-unit"><span id="hours">--</span><small>hrs</small></div>
-                        <div class="countdown-unit"><span id="mins">--</span><small>min</small></div>
-                    </div>
-                </div>
+                <div id="live-counter" style="margin-top:24px;color:var(--muted);font-size:0.9rem;text-align:center;min-height:20px;"></div>
             </div>
         </section>
 
-        <section class="stats">
-            <div class="container" style="display: contents;">
-                <div class="stat"><div class="stat-value">23M+</div><div class="stat-label">Domains screened daily</div></div>
-                <div class="stat"><div class="stat-value" id="czds-zone-count">3</div><div class="stat-label" id="czds-zone-label">CZDS zones live</div></div>
-                <div class="stat"><div class="stat-value">RDAP</div><div class="stat-label">Verified availability</div></div>
-                <div class="stat"><div class="stat-value">$10-50</div><div class="stat-label">Per domain (owned forever)</div></div>
-            </div>
-        </section>
-
-        <section id="features" class="features">
+        <!-- 2. SIGNALS -->
+        <section style="padding:80px 0;">
             <div class="container">
-                <h2 class="section-title">Five Distribution Strategies</h2>
-                <p class="section-subtitle">Stop renting attention. Start owning distribution.</p>
-                <div class="features-grid">
-                    <div class="feature-card">
-                        <div class="feature-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <line x1="2" y1="12" x2="22" y2="12"></line>
-                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-                            </svg>
-                        </div>
-                        <h3 class="feature-title">Micro-Site Network</h3>
-                        <p class="feature-desc">Own the content that leads to your product. Build SEO-optimized sites in your niche that naturally funnel to your app.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
-                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-                            </svg>
-                        </div>
-                        <h3 class="feature-title">Keyword Arbitrage</h3>
-                        <p class="feature-desc">Rank instantly for high-intent searches. Exact-match domains bypass the 12-month SEO grind.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
-                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-                            </svg>
-                        </div>
-                        <h3 class="feature-title">Authority Redirects</h3>
-                        <p class="feature-desc">301 redirect aged domains with backlinks to your main site. Instant authority boost.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
-                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                                <circle cx="9" cy="7" r="4"></circle>
-                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-                            </svg>
-                        </div>
-                        <h3 class="feature-title">Audience Pre-Building</h3>
-                        <p class="feature-desc">Build an email list before you launch. Acquire domains with existing traffic in your niche.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
-                                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-                            </svg>
-                        </div>
-                        <h3 class="feature-title">Comparison Sites</h3>
-                        <p class="feature-desc">Control the narrative when users compare options. Own "best X alternatives" pages where your product wins.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;color:#0a0a0f">
-                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                                <line x1="3" y1="9" x2="21" y2="9"></line>
-                                <line x1="9" y1="21" x2="9" y2="9"></line>
-                            </svg>
-                        </div>
-                        <h3 class="feature-title">Internal Link Network</h3>
-                        <p class="feature-desc">Connect your domains strategically. Cross-link for compound SEO effects across your entire portfolio.</p>
-                    </div>
+                <h2 class="section-title">7 scoring signals</h2>
+                <p class="section-subtitle">Every domain is checked against all seven before it reaches you.</p>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin-top:32px;">
+                    <div class="card"><h3 class="card-title" style="color:var(--accent);">CZDS Zone Files</h3><p style="color:var(--muted);font-size:0.9rem;">Direct ICANN feed of registered domains, diffed daily to find drops.</p></div>
+                    <div class="card"><h3 class="card-title" style="color:var(--accent);">Wayback History</h3><p style="color:var(--muted);font-size:0.9rem;">Site age, snapshots, and archived activity from the Wayback Machine.</p></div>
+                    <div class="card"><h3 class="card-title" style="color:var(--accent);">OpenPageRank</h3><p style="color:var(--muted);font-size:0.9rem;">Independent PageRank signal measuring backlink authority.</p></div>
+                    <div class="card"><h3 class="card-title" style="color:var(--accent);">RDAP Verification</h3><p style="color:var(--muted);font-size:0.9rem;">Every domain live-checked for availability before it's published.</p></div>
+                    <div class="card"><h3 class="card-title" style="color:var(--accent);">Cloudflare Registrar</h3><p style="color:var(--muted);font-size:0.9rem;">Real-time pricing and availability from Cloudflare's registrar API.</p></div>
+                    <div class="card"><h3 class="card-title" style="color:var(--accent);">Brandability</h3><p style="color:var(--muted);font-size:0.9rem;">Length, dictionary words, and pronounceability scored automatically.</p></div>
+                    <div class="card"><h3 class="card-title" style="color:var(--accent);">Market Comparables</h3><p style="color:var(--muted);font-size:0.9rem;">Priced against real sales from DNJournal, NamePros, DomainInvesting.</p></div>
                 </div>
             </div>
         </section>
 
-        <section id="pipeline" class="pipeline">
+        <!-- 3. HOW IT WORKS -->
+        <section class="pipeline" style="padding:80px 0;">
             <div class="container">
-                <h2 class="section-title">The Distribution Pipeline</h2>
-                <p class="section-subtitle">From expired domain to traffic channel</p>
+                <h2 class="section-title">How it works</h2>
                 <div class="pipeline-steps">
-                    <div class="step"><div class="step-number">1</div><div class="step-title">Screen</div><div class="step-desc">23M+ domains via CZDS</div></div>
-                    <div class="step"><div class="step-number">2</div><div class="step-title">Score</div><div class="step-desc">Distribution value</div></div>
-                    <div class="step"><div class="step-number">3</div><div class="step-title">Acquire</div><div class="step-desc">$10-50/domain</div></div>
-                    <div class="step"><div class="step-number">4</div><div class="step-title">Deploy</div><div class="step-desc">Content or redirect</div></div>
-                    <div class="step"><div class="step-number">5</div><div class="step-title">Connect</div><div class="step-desc">Link to your products</div></div>
+                    <div class="step"><div class="step-number">1</div><div class="step-title">Detect</div><div class="step-desc">ICANN zone files diffed daily to find drops</div></div>
+                    <div class="step"><div class="step-number">2</div><div class="step-title">Score</div><div class="step-desc">7 signals weighted by real market data</div></div>
+                    <div class="step"><div class="step-number">3</div><div class="step-title">Verify</div><div class="step-desc">RDAP confirms availability before publishing</div></div>
+                    <div class="step"><div class="step-number">4</div><div class="step-title">Publish</div><div class="step-desc">Browse, filter, price-check in the marketplace</div></div>
                 </div>
             </div>
         </section>
 
-        <section id="portfolio" class="portfolio">
+        <!-- 4. PRICING -->
+        <section id="pricing" style="padding:80px 0;text-align:center;">
             <div class="container">
-                <h2 class="section-title">Our Distribution Network</h2>
-                <p class="section-subtitle">Every domain is a channel to our products</p>
-                
-                <!-- Portfolio stats will be populated once domains are verified -->
-                
-                <div class="portfolio-grid">
-                    <!-- Tech / SaaS -->
-                    <div class="portfolio-card prime">
-                        <div class="portfolio-domain">doomticker.com <span class="badge badge-prime">Prime</span></div>
-                        <div class="portfolio-meta">Threat intelligence platform</div>
-                        <div class="portfolio-category">Tech / Security</div>
-                    </div>
-                    <div class="portfolio-card prime">
-                        <div class="portfolio-domain">intelflag.com <span class="badge badge-prime">Prime</span></div>
-                        <div class="portfolio-meta">Geopolitical simulation</div>
-                        <div class="portfolio-category">Tech / Gaming</div>
-                    </div>
-                    <div class="portfolio-card prime">
-                        <div class="portfolio-domain">flxgate.com <span class="badge badge-prime">Prime</span></div>
-                        <div class="portfolio-meta">AI monetization gateway</div>
-                        <div class="portfolio-category">SaaS / AI</div>
-                    </div>
-                    <div class="portfolio-card">
-                        <div class="portfolio-domain">5sprints.com</div>
-                        <div class="portfolio-meta">Chrome extension tracking</div>
-                        <div class="portfolio-category">Developer Tools</div>
-                    </div>
-                    <div class="portfolio-card">
-                        <div class="portfolio-domain">5sprints.app</div>
-                        <div class="portfolio-meta">5sprints app variant</div>
-                        <div class="portfolio-category">Developer Tools</div>
-                    </div>
-                    <div class="portfolio-card">
-                        <div class="portfolio-domain">5sprints.dev</div>
-                        <div class="portfolio-meta">5sprints dev variant</div>
-                        <div class="portfolio-category">Developer Tools</div>
-                    </div>
-                    <div class="portfolio-card">
-                        <div class="portfolio-domain">clawsap.com</div>
-                        <div class="portfolio-meta">ClawSup platform</div>
-                        <div class="portfolio-category">SaaS</div>
-                    </div>
-                    <div class="portfolio-card">
-                        <div class="portfolio-domain">clawsap.app</div>
-                        <div class="portfolio-meta">ClawSup app variant</div>
-                        <div class="portfolio-category">SaaS</div>
-                    </div>
-                    <div class="portfolio-card">
-                        <div class="portfolio-domain">clawsap.dev</div>
-                        <div class="portfolio-meta">ClawSup dev variant</div>
-                        <div class="portfolio-category">SaaS</div>
-                    </div>
-                    
-                    <!-- Faith / Creative -->
-                    <div class="portfolio-card prime">
-                        <div class="portfolio-domain">lordsguide.com <span class="badge badge-prime">Prime</span></div>
-                        <div class="portfolio-meta">AI-powered faith platform</div>
-                        <div class="portfolio-category">Faith / Spirituality</div>
-                    </div>
-                    <div class="portfolio-card">
-                        <div class="portfolio-domain">mofoex.com</div>
-                        <div class="portfolio-meta">MoFoEx platform</div>
-                        <div class="portfolio-category">Finance</div>
-                    </div>
-                    
-                    <!-- Premium / Production -->
-                    <div class="portfolio-card">
-                        <div class="portfolio-domain">888.productions</div>
-                        <div class="portfolio-meta">Premium production domain</div>
-                        <div class="portfolio-category">Media / Production</div>
-                    </div>
-                    
-                    <!-- This Platform -->
-                    <div class="portfolio-card prime">
-                        <div class="portfolio-domain">eyecx.com <span class="badge badge-prime">Prime</span></div>
-                        <div class="portfolio-meta">You're looking at it</div>
-                        <div class="portfolio-category">Domain Intel</div>
-                    </div>
-                </div>
-                
+                <h2 class="section-title">Free preview. Waitlist for full access.</h2>
+                <p style="color:var(--muted);margin-bottom:32px;">The marketplace is live now. Full daily alerts and API access coming soon.</p>
+                <a href="#waitlist" class="btn btn-primary" style="font-size:1.1rem;padding:16px 32px;">Join the waitlist</a>
             </div>
         </section>
 
-        <section id="pricing" class="pricing">
+        <!-- 5. RECENT ACTIVITY -->
+        <section id="activity" style="padding:60px 0;">
             <div class="container">
-                <h2 class="section-title">Build Your Distribution Network</h2>
-                <p class="section-subtitle">Daily domains scored for distribution value</p>
-                <div class="pricing-grid">
-                    <div class="price-card">
-                        <div class="price-tier">Side Project</div>
-                        <div class="price-value">$19<span class="price-period">/mo</span></div>
-                        <ul class="price-features">
-                            <li>50 domains/day</li>
-                            <li>Distribution score included</li>
-                            <li>Keyword match alerts</li>
-                            <li>Email delivery</li>
-                        </ul>
-                        <a href="#waitlist" class="btn btn-outline" style="width: 100%;">Join Waitlist</a>
-                    </div>
-                    <div class="price-card featured">
-                        <div class="price-tier">Startup</div>
-                        <div class="price-value">$49<span class="price-period">/mo</span></div>
-                        <ul class="price-features">
-                            <li>200 domains/day</li>
-                            <li>Niche filtering</li>
-                            <li>Backlink data</li>
-                            <li>API access</li>
-                            <li>Slack alerts</li>
-                        </ul>
-                        <a href="#waitlist" class="btn btn-primary" style="width: 100%;">Join Waitlist</a>
-                    </div>
-                    <div class="price-card">
-                        <div class="price-tier">Agency</div>
-                        <div class="price-value">$99<span class="price-period">/mo</span></div>
-                        <ul class="price-features">
-                            <li>500 domains/day</li>
-                            <li>Multi-product mapping</li>
-                            <li>Authority domains first</li>
-                            <li>Webhook integration</li>
-                            <li>White-label reports</li>
-                        </ul>
-                        <a href="#waitlist" class="btn btn-outline" style="width: 100%;">Join Waitlist</a>
-                    </div>
-                </div>
+                <div id="live-activity" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;"></div>
             </div>
         </section>
 
-        <section id="tiers" class="tiers">
-            <div class="container">
-                <h2 class="section-title">Domain Tiers</h2>
-                <p class="section-subtitle">How we classify expired domains</p>
-                <table class="tier-table">
-                    <thead><tr><th>Tier</th><th>Score</th><th>Est. Value</th><th>Action</th></tr></thead>
-                    <tbody>
-                        <tr><td><span class="tier-badge tier-diamond">💎 Diamond</span></td><td>85-100</td><td>$500 - $5,000</td><td>Auto-purchase</td></tr>
-                        <tr><td><span class="tier-badge tier-gold">🥇 Gold</span></td><td>70-84</td><td>$150 - $500</td><td>Purchase + restore</td></tr>
-                        <tr><td><span class="tier-badge tier-silver">🥈 Silver</span></td><td>55-69</td><td>$50 - $150</td><td>Subscription delivery</td></tr>
-                    </tbody>
-                </table>
+        <!-- 6. TRUST -->
+        <section style="padding:40px 0;border-top:1px solid var(--border);">
+            <div class="container" style="display:flex;justify-content:center;gap:32px;flex-wrap:wrap;color:var(--muted);font-size:0.85rem;text-align:center;">
+                <span>NASA P10 code standards</span>
+                <span>RDAP-verified inventory</span>
+                <span>Market-anchored pricing</span>
+                <span>No affiliate links</span>
             </div>
         </section>
 
-        <section id="waitlist" class="waitlist">
-            <div class="container">
-                <h2>Stop renting attention.<br>Start owning <span class="gradient-text">distribution</span>.</h2>
-                <p style="color: var(--muted); font-size: 1.1rem;">Join the waitlist. Subscriptions open June 15, 2026.</p>
-                
+                <!-- 7. WAITLIST -->
+        <section id="waitlist" class="waitlist" style="padding:80px 0;text-align:center;">
+            <div class="container" style="max-width:500px;">
+                <h2>Get daily domain picks.</h2>
+                <p style="color:var(--muted);margin-bottom:24px;">Scored, verified, and priced. Delivered to your inbox.</p>
                 <form class="waitlist-form" id="waitlist-form">
                     <input type="email" name="email" class="waitlist-input" placeholder="Enter your email" required>
                     <button type="submit" class="btn btn-primary">Join Waitlist</button>
@@ -1249,7 +1057,13 @@
 
     <footer>
         <div class="container">
-            <p>© 2026 EyeCX · <a href="https://github.com/kjssamsungdev-max/eyecx">GitHub</a> · <a href="mailto:hello@eyecx.com">Contact</a> · Built by <a href="https://kjs.productions">KJS</a></p>
+            <div style="display:flex;justify-content:center;gap:24px;flex-wrap:wrap;margin-bottom:12px;">
+                <a href="/marketplace">Marketplace</a>
+                <a href="/blog">Blog</a>
+                <a href="/community">Community</a>
+                <a href="#waitlist">Waitlist</a>
+            </div>
+            <p>Built on Cloudflare. Powered by ICANN CZDS. · <a href="https://github.com/kjssamsungdev-max/eyecx">GitHub</a> · <a href="mailto:hello@eyecx.com">Contact</a> · <a href="https://kjs.productions">KJS</a></p>
         </div>
     </footer>
     
@@ -2714,17 +2528,35 @@
         </svg>`;
     }
 
-    // ============ COUNTDOWN + WAITLIST ============
-    function updateCountdown() {
-        const diff = new Date('2026-06-15T00:00:00') - new Date();
-        if (diff <= 0) {
-            document.getElementById('countdown').innerHTML = '<div style="color:var(--success);font-size:1.5rem;font-weight:600;">Now Live!</div>';
-            return;
-        }
-        document.getElementById('days').textContent = Math.floor(diff / 86400000);
-        document.getElementById('hours').textContent = Math.floor((diff % 86400000) / 3600000);
-        document.getElementById('mins').textContent = Math.floor((diff % 3600000) / 60000);
+    // ============ LIVE DATA + WAITLIST ============
+    // Populate live counter in hero
+    async function loadLiveData() {
+        const counter = document.getElementById('live-counter');
+        const activity = document.getElementById('live-activity');
+        try {
+            const [domsResp, salesResp] = await Promise.all([
+                fetch(`${API}/api/domains?limit=1`, { headers: { 'User-Agent': 'EyeCX' } }).then(r => r.json()).catch(() => null),
+                fetch(`${API}/api/scoring/weights`, { headers: { 'User-Agent': 'EyeCX' } }).then(r => r.json()).catch(() => null),
+            ]);
+            // Counter
+            if (counter) {
+                const parts = [];
+                if (domsResp?.count !== undefined) parts.push(`${domsResp.count} domains available`);
+                parts.push('updated daily');
+                counter.textContent = parts.join(' · ');
+            }
+            // Activity cards
+            if (activity) {
+                const cards = [];
+                if (domsResp?.domains?.[0]) {
+                    const d = domsResp.domains[0];
+                    cards.push(`<div class="card" style="text-align:center;"><div style="color:var(--muted);font-size:0.8rem;">Latest domain</div><div style="font-size:1.1rem;font-weight:600;color:var(--accent);margin-top:4px;">${d.domain}</div><div style="color:var(--muted);font-size:0.85rem;">Score: ${d.potential_score} · ${d.tier}</div></div>`);
+                }
+                if (cards.length) activity.innerHTML = cards.join('');
+            }
+        } catch {}
     }
+    function updateCountdown() {} // Removed — no countdown timer
 
     const wf = document.getElementById('waitlist-form');
     if (wf) {
@@ -2744,8 +2576,7 @@
     }
 
     // ============ INIT ============
-    updateCountdown();
-    setInterval(updateCountdown, 60000);
+    loadLiveData();
     checkAuth();
     route();
 
