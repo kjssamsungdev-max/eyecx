@@ -11,7 +11,7 @@ def rdap_check(domain, timeout=15, retries=2):
     """Check RDAP with retry + backoff."""
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(f'https://rdap.org/domain/{domain}')
+            req = urllib.request.Request(f'https://rdap.org/domain/{domain}', headers={'User-Agent': 'EyeCX-Bulk/1.0'})
             urllib.request.urlopen(req, timeout=timeout)
             return 'registered'
         except urllib.error.HTTPError as e:

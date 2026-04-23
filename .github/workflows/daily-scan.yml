@@ -209,7 +209,7 @@ jobs:
 
           echo "Converting CSV to JSON and uploading in batches..."
           python3 -c "
-          import csv, json, os, urllib.request
+          import csv, json, os, sys, time, urllib.request, urllib.error
 
           api = os.environ['EYECX_API_URL']
           secret = os.environ['EYECX_API_SECRET']
@@ -226,21 +226,40 @@ jobs:
                       else: clean[k] = v
                   rows.append(clean)
 
+          def post_with_retry(url, data, headers, max_attempts=3):
+              for attempt in range(max_attempts):
+                  try:
+                      req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+                      resp = urllib.request.urlopen(req, timeout=30)
+                      return json.loads(resp.read())
+                  except urllib.error.HTTPError as e:
+                      if e.code < 500:
+                          print(f'  HTTP {e.code} — not retrying (client error)')
+                          raise
+                      if attempt < max_attempts - 1:
+                          delay = 2 ** (attempt + 1)
+                          print(f'  HTTP {e.code} — retrying in {delay}s (attempt {attempt+1})')
+                          time.sleep(delay)
+                      else: raise
+                  except Exception as e:
+                      if attempt < max_attempts - 1:
+                          time.sleep(2 ** (attempt + 1))
+                      else: raise
+
+          hdrs = {'Authorization': f'Bearer {secret}', 'Content-Type': 'application/json', 'User-Agent': 'EyeCX-DailyScan/1.0'}
+
           total_inserted = 0
           batch_size = 200
           for i in range(0, len(rows), batch_size):
               batch = rows[i:i+batch_size]
               data = json.dumps(batch).encode()
-              req = urllib.request.Request(
-                  f'{api}/api/domains/bulk',
-                  data=data,
-                  headers={'Authorization': f'Bearer {secret}', 'Content-Type': 'application/json'},
-                  method='POST'
-              )
-              resp = urllib.request.urlopen(req, timeout=30)
-              result = json.loads(resp.read())
+              result = post_with_retry(f'{api}/api/domains/bulk', data, hdrs)
               total_inserted += result.get('inserted', 0)
               print(f'  Batch {i//batch_size + 1}: {result.get(\"inserted\",0)}/{len(batch)} inserted')
+
+          if total_inserted == 0 and len(rows) > 0:
+              print(f'::error::Upload produced 0 inserts from {len(rows)} rows')
+              sys.exit(1)
 
           print(f'Total uploaded: {total_inserted}/{len(rows)}')
           "
@@ -253,10 +272,11 @@ jobs:
         run: |
           echo "Running RDAP verification from GH runner (not Worker — CF IPs blocked by RDAP)..."
           python3 -c "
-          import csv, json, urllib.request, time, os
+          import csv, json, urllib.request, urllib.error, time, os
 
           api = os.environ['EYECX_API_URL']
           secret = os.environ['EYECX_API_SECRET']
+          UA = 'EyeCX-DailyScan/1.0'
           available, registered, errors = 0, 0, 0
 
           with open('results/scored.csv') as f:
@@ -267,7 +287,7 @@ jobs:
 
           for i, domain in enumerate(domains):
               try:
-                  req = urllib.request.Request(f'https://rdap.org/domain/{domain}')
+                  req = urllib.request.Request(f'https://rdap.org/domain/{domain}', headers={'User-Agent': UA})
                   resp = urllib.request.urlopen(req, timeout=10)
                   status = 'registered'
                   registered += 1
@@ -297,7 +317,7 @@ jobs:
               try:
                   req = urllib.request.Request(
                       f'{api}/api/domains/verify-update', data=data,
-                      headers={'Authorization': f'Bearer {secret}', 'Content-Type': 'application/json'},
+                      headers={'Authorization': f'Bearer {secret}', 'Content-Type': 'application/json', 'User-Agent': UA},
                       method='POST')
                   resp = urllib.request.urlopen(req, timeout=30)
                   r = json.loads(resp.read())

@@ -11,7 +11,7 @@ def api_call(path, method='POST', data=None):
     """Call Worker API with Bearer API_SECRET."""
     req = urllib.request.Request(
         f'{API}{path}', data=json.dumps(data).encode() if data else None,
-        headers={'Authorization': f'Bearer {SECRET}', 'Content-Type': 'application/json'},
+        headers={'User-Agent': 'EyeCX-Bulk/1.0', 'Authorization': f'Bearer {SECRET}', 'Content-Type': 'application/json'},
         method=method)
     return json.loads(urllib.request.urlopen(req, timeout=120).read())
 
