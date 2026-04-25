@@ -90,6 +90,8 @@ CREATE INDEX IF NOT EXISTS idx_feedback_domain ON domain_feedback(domain);
 -- score_version INTEGER DEFAULT 0  (added 2026-04-21)
 -- last_rescored_at TEXT  (added 2026-04-21)
 -- brand_score INTEGER DEFAULT 0  (added 2026-04-21)
+-- rdap_status TEXT  (added 2026-04-26)
+-- grace_until TEXT  (added 2026-04-26)
 
 -- Market sales (extracted from curated content)
 CREATE TABLE IF NOT EXISTS market_sales (

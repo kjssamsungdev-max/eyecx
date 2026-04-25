@@ -277,32 +277,40 @@ jobs:
           api = os.environ['EYECX_API_URL']
           secret = os.environ['EYECX_API_SECRET']
           UA = 'EyeCX-DailyScan/1.0'
-          available, registered, errors = 0, 0, 0
+          available, registered, grace, errors = 0, 0, 0, 0
 
           with open('results/scored.csv') as f:
               domains = [row['domain'] for row in csv.DictReader(f)]
 
-          print(f'Verifying {len(domains)} domains via RDAP...')
+          print(f'Verifying {len(domains)} domains via RDAP (grace-period aware)...')
           updates = []
 
           for i, domain in enumerate(domains):
+              status = 'unknown'
+              rdap_status = 'unknown'
               try:
                   req = urllib.request.Request(f'https://rdap.org/domain/{domain}', headers={'User-Agent': UA})
-                  resp = urllib.request.urlopen(req, timeout=10)
-                  status = 'registered'
-                  registered += 1
+                  resp = urllib.request.urlopen(req, timeout=15)
+                  data = json.loads(resp.read())
+                  flags = [s.lower() for s in data.get('status', [])]
+
+                  if any('redemption' in f for f in flags):
+                      status = 'grace_period'; rdap_status = 'redemption_period'; grace += 1
+                  elif any('pending delete' in f for f in flags):
+                      status = 'grace_period'; rdap_status = 'pending_delete'; grace += 1
+                  elif any('client hold' in f or 'auto renew' in f for f in flags):
+                      status = 'registered'; rdap_status = 'client_hold'; registered += 1
+                  else:
+                      status = 'registered'; rdap_status = 'registered'; registered += 1
               except urllib.error.HTTPError as e:
                   if e.code == 404:
-                      status = 'available'
-                      available += 1
+                      status = 'available'; rdap_status = 'available'; available += 1
                   else:
-                      status = 'unknown'
                       errors += 1
               except Exception:
-                  status = 'unknown'
                   errors += 1
 
-              updates.append({'domain': domain, 'availability_status': status})
+              updates.append({'domain': domain, 'availability_status': status, 'rdap_status': rdap_status})
 
               if (i + 1) % 50 == 0:
                   print(f'  Checked {i+1}/{len(domains)}: {available} available, {registered} registered')
@@ -325,7 +333,7 @@ jobs:
               except Exception as e:
                   print(f'  Batch update failed: {e}')
 
-          print(f'Verification complete: {available} available, {registered} registered')
+          print(f'Verification complete: {available} available, {grace} grace_period, {registered} registered, {errors} errors')
           "
 
       - name: Upload artifacts
