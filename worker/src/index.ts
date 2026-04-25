@@ -286,15 +286,74 @@ export default {
     const path = url.pathname;
 
     // Public endpoints (no auth)
-    // GET /api/sitemap-data - Data for sitemap generation
-    if (path === '/api/sitemap-data' && request.method === 'GET') {
+    // GET /sitemap.xml - Sitemap index
+    if (path === '/sitemap.xml' && request.method === 'GET') {
+      const now = new Date().toISOString().split('T')[0];
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://eyecx.com/sitemap-blog.xml</loc><lastmod>${now}</lastmod></sitemap>
+  <sitemap><loc>https://eyecx.com/sitemap-domains.xml</loc><lastmod>${now}</lastmod></sitemap>
+</sitemapindex>`;
+      return new Response(xml, { headers: { 'Content-Type': 'application/xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    // GET /sitemap-blog.xml - Blog + curated content sitemap
+    if (path === '/sitemap-blog.xml' && request.method === 'GET') {
+      const base = 'https://eyecx.com';
+      const now = new Date().toISOString().split('T')[0];
+      const entries: string[] = [];
+
+      // Static pages
+      for (const [loc, pri, freq] of [['/', '1.0', 'daily'], ['/marketplace', '0.9', 'daily'], ['/blog', '0.8', 'daily'], ['/community', '0.6', 'weekly'], ['/docs', '0.5', 'monthly']] as const) {
+        entries.push(`  <url><loc>${base}${loc}</loc><lastmod>${now}</lastmod><changefreq>${freq}</changefreq><priority>${pri}</priority></url>`);
+      }
+
+      // Articles
       const articles = await env.DB.prepare(
         "SELECT slug, updated_at FROM articles WHERE status = 'published' LIMIT 1000"
-      ).all();
+      ).all<{ slug: string; updated_at: string }>();
+      for (const a of (articles.results || [])) {
+        entries.push(`  <url><loc>${base}/blog/${a.slug}</loc><lastmod>${a.updated_at?.split(' ')[0] || now}</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>`);
+      }
+
+      // Curated content
       const curated = await env.DB.prepare(
-        "SELECT id, curated_at FROM curated_content WHERE status = 'published' AND hidden = 0 ORDER BY curated_at DESC LIMIT 5000"
-      ).all();
-      return json({ articles: articles.results || [], curated: curated.results || [] });
+        "SELECT id, curated_at FROM curated_content WHERE status = 'published' AND hidden = 0 ORDER BY curated_at DESC LIMIT 10000"
+      ).all<{ id: number; curated_at: string }>();
+      for (const c of (curated.results || [])) {
+        entries.push(`  <url><loc>${base}/blog/curated/${c.id}</loc><lastmod>${c.curated_at?.split(' ')[0] || now}</lastmod><changefreq>weekly</changefreq><priority>0.5</priority></url>`);
+      }
+
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.join('\n')}\n</urlset>`;
+      return new Response(xml, { headers: { 'Content-Type': 'application/xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    // GET /sitemap-domains.xml - Available domains sitemap
+    if (path === '/sitemap-domains.xml' && request.method === 'GET') {
+      const base = 'https://eyecx.com';
+      const now = new Date().toISOString().split('T')[0];
+      const entries: string[] = [];
+
+      const domains = await env.DB.prepare(
+        "SELECT domain, first_seen FROM domains WHERE availability_status = 'available' ORDER BY potential_score DESC LIMIT 10000"
+      ).all<{ domain: string; first_seen: string }>();
+      for (const d of (domains.results || [])) {
+        entries.push(`  <url><loc>${base}/marketplace</loc><lastmod>${d.first_seen?.split('T')[0] || now}</lastmod><changefreq>daily</changefreq><priority>0.6</priority></url>`);
+      }
+
+      // Dedupe — marketplace is a single page, domains aren't separate URLs
+      // Instead list the marketplace page once with latest lastmod
+      if (entries.length === 0) {
+        entries.push(`  <url><loc>${base}/marketplace</loc><lastmod>${now}</lastmod><changefreq>daily</changefreq><priority>0.9</priority></url>`);
+      } else {
+        // Just one marketplace entry with latest date
+        const latest = (domains.results || [])[0]?.first_seen?.split('T')[0] || now;
+        entries.length = 0;
+        entries.push(`  <url><loc>${base}/marketplace</loc><lastmod>${latest}</lastmod><changefreq>daily</changefreq><priority>0.9</priority></url>`);
+      }
+
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.join('\n')}\n</urlset>`;
+      return new Response(xml, { headers: { 'Content-Type': 'application/xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
     }
 
     if (path === '/api/health') {
