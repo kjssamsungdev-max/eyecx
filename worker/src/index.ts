@@ -334,22 +334,16 @@ export default {
       const now = new Date().toISOString().split('T')[0];
       const entries: string[] = [];
 
-      const domains = await env.DB.prepare(
-        "SELECT domain, first_seen FROM domains WHERE availability_status = 'available' ORDER BY potential_score DESC LIMIT 10000"
-      ).all<{ domain: string; first_seen: string }>();
-      for (const d of (domains.results || [])) {
-        entries.push(`  <url><loc>${base}/marketplace</loc><lastmod>${d.first_seen?.split('T')[0] || now}</lastmod><changefreq>daily</changefreq><priority>0.6</priority></url>`);
-      }
+      // Marketplace index page
+      entries.push(`  <url><loc>${base}/marketplace</loc><lastmod>${now}</lastmod><changefreq>daily</changefreq><priority>0.9</priority></url>`);
 
-      // Dedupe — marketplace is a single page, domains aren't separate URLs
-      // Instead list the marketplace page once with latest lastmod
-      if (entries.length === 0) {
-        entries.push(`  <url><loc>${base}/marketplace</loc><lastmod>${now}</lastmod><changefreq>daily</changefreq><priority>0.9</priority></url>`);
-      } else {
-        // Just one marketplace entry with latest date
-        const latest = (domains.results || [])[0]?.first_seen?.split('T')[0] || now;
-        entries.length = 0;
-        entries.push(`  <url><loc>${base}/marketplace</loc><lastmod>${latest}</lastmod><changefreq>daily</changefreq><priority>0.9</priority></url>`);
+      // Individual domain pages
+      const domains = await env.DB.prepare(
+        "SELECT domain, last_rescored_at, first_seen FROM domains WHERE availability_status = 'available' ORDER BY potential_score DESC LIMIT 10000"
+      ).all<{ domain: string; last_rescored_at: string; first_seen: string }>();
+      for (const d of (domains.results || [])) {
+        const mod = d.last_rescored_at?.split(' ')[0] || d.first_seen?.split('T')[0] || now;
+        entries.push(`  <url><loc>${base}/marketplace/domain/${d.domain}</loc><lastmod>${mod}</lastmod><changefreq>daily</changefreq><priority>0.7</priority></url>`);
       }
 
       const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.join('\n')}\n</urlset>`;
@@ -1198,6 +1192,14 @@ export default {
       }
 
       return json({ checked, available, registered, remaining: domains.length - checked });
+    }
+
+    // ============ SERVER-RENDERED DOMAIN PAGE ============
+    if (path.match(/^\/marketplace\/domain\/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.[a-z]{2,}$/) && request.method === 'GET') {
+      return await renderDomainPage(path.split('/')[3], env);
+    }
+    if (path.startsWith('/marketplace/domain/') && request.method === 'GET') {
+      return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/html' } });
     }
 
     // ============ /v1 PUBLIC API ============
@@ -3155,6 +3157,150 @@ async function runDomainRescore(env: Env): Promise<{
     top_risers: deltas.slice(0, 10),
     top_fallers: deltas.slice(-10).reverse(),
   };
+}
+
+// ============ SERVER-RENDERED DOMAIN PAGE ============
+
+async function renderDomainPage(fqdn: string, env: Env): Promise<Response> {
+  const d = await env.DB.prepare(
+    `SELECT domain, tld, potential_score, tier, estimated_flip_value, brand_score,
+     wayback_snapshots, estimated_age_years, availability_status, page_rank,
+     predicted_price_usd, price_low_usd, price_high_usd, price_confidence, price_comps_count,
+     first_seen, last_rescored_at, score_version
+     FROM domains WHERE domain = ?`
+  ).bind(fqdn).first<any>();
+
+  if (!d) return new Response('Domain not found', { status: 404 });
+  if (d.availability_status === 'registered') return new Response('Gone — domain is now registered', { status: 410 });
+
+  // Comparables
+  const nameLen = fqdn.split('.')[0].length;
+  const comps = await env.DB.prepare(
+    `SELECT domain, sale_price_usd, source_name FROM market_sales
+     WHERE tld = ? AND LENGTH(REPLACE(domain, ?, '')) - 1 BETWEEN ? AND ?
+     ORDER BY sale_price_usd DESC LIMIT 5`
+  ).bind(d.tld, d.tld, nameLen - 2, nameLen + 2).all<any>();
+
+  const compAvg = await env.DB.prepare(
+    `SELECT AVG(sale_price_usd) as avg, COUNT(*) as cnt FROM market_sales
+     WHERE tld = ? AND LENGTH(REPLACE(domain, ?, '')) - 1 BETWEEN ? AND ?`
+  ).bind(d.tld, d.tld, nameLen - 2, nameLen + 2).first<{ avg: number; cnt: number }>();
+
+  const tldSales = await env.DB.prepare(
+    'SELECT COUNT(*) as c FROM market_sales WHERE tld = ?'
+  ).bind(d.tld).first<{ c: number }>();
+
+  // Build "Why this domain?" paragraph
+  const name = fqdn.split('.')[0];
+  const whyParts: string[] = [];
+  whyParts.push(`${name.length}-letter ${d.tld} domain`);
+  if (d.brand_score >= 40) whyParts.push('with strong brandability');
+  if (d.estimated_age_years) whyParts.push(`${d.estimated_age_years} years old`);
+  if (d.wayback_snapshots > 0) whyParts.push(`${d.wayback_snapshots} Wayback snapshots`);
+  whyParts.push(`scored ${d.potential_score} on history + market signals`);
+  if (compAvg?.cnt && compAvg.cnt >= 3) {
+    whyParts.push(`${compAvg.cnt} comparable ${d.tld} sales averaged $${Math.round(compAvg.avg).toLocaleString()}`);
+  }
+  const whyText = whyParts.join('. ') + '.';
+
+  const priceStr = d.predicted_price_usd ? `$${d.predicted_price_usd.toLocaleString()}` : '';
+  const descStr = `${fqdn} ${d.tld} — score ${d.potential_score}${priceStr ? `, est. ${priceStr}` : ''}${compAvg?.cnt ? `, ${compAvg.cnt} comparable sales` : ''}. Verified drop domain on EyeCX.`;
+  const canonical = `https://eyecx.com/marketplace/domain/${fqdn}`;
+  const tierColors: Record<string, string> = { diamond: '#a78bfa', gold: '#fbbf24', silver: '#94a3b8', bronze: '#cd7f32' };
+  const statusColor = d.availability_status === 'available' ? '#34d399' : '#d97706';
+
+  const compRows = (comps.results || []).map((c: any) =>
+    `<tr><td>${c.domain}</td><td style="color:#34d399;font-weight:600;">$${c.sale_price_usd?.toLocaleString()}</td><td>${c.source_name || ''}</td></tr>`
+  ).join('');
+
+  const jsonLd = JSON.stringify({
+    '@context': 'https://schema.org', '@type': 'Product',
+    name: fqdn, description: descStr,
+    offers: {
+      '@type': 'Offer', priceCurrency: 'USD',
+      price: d.predicted_price_usd || d.estimated_flip_value || 0,
+      availability: d.availability_status === 'available' ? 'https://schema.org/InStock' : 'https://schema.org/PreOrder',
+    },
+  });
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>${fqdn} — Drop Domain on EyeCX</title>
+<meta name="description" content="${descStr}">
+<link rel="canonical" href="${canonical}">
+<meta property="og:title" content="${fqdn} — Drop Domain on EyeCX">
+<meta property="og:description" content="${descStr}">
+<meta property="og:url" content="${canonical}">
+<meta property="og:image" content="https://eyecx.com/assets/og-image.png">
+<meta property="og:type" content="product">
+<script type="application/ld+json">${jsonLd}</script>
+<style>
+:root{--bg:#0a0a0f;--surface:#12121a;--border:#1e1e2e;--text:#e4e4e7;--muted:#71717a;--accent:#22d3ee;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:24px;}
+.container{max-width:800px;margin:0 auto;}
+a{color:var(--accent);text-decoration:none;}
+.badge{display:inline-block;padding:4px 12px;border-radius:6px;font-size:0.85rem;font-weight:600;}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:24px 0;}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:center;}
+.stat .v{font-size:1.5rem;font-weight:700;color:var(--accent);}
+.stat .l{font-size:0.8rem;color:var(--muted);margin-top:4px;}
+table{width:100%;border-collapse:collapse;margin:16px 0;}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);}
+th{color:var(--muted);font-size:0.8rem;text-transform:uppercase;}
+.btn{display:inline-block;padding:12px 24px;border-radius:8px;font-weight:600;font-size:1rem;cursor:pointer;border:none;min-height:44px;}
+.btn-primary{background:var(--accent);color:#000;}
+.btn-outline{background:none;border:2px solid var(--border);color:var(--text);}
+.bar{height:8px;border-radius:4px;margin:4px 0;}
+</style>
+</head>
+<body>
+<div class="container">
+<p style="margin-bottom:16px;"><a href="/marketplace">&larr; Back to marketplace</a></p>
+<h1 style="font-family:monospace;font-size:2.5rem;margin-bottom:8px;">${fqdn}</h1>
+<div style="display:flex;gap:8px;margin-bottom:24px;">
+<span class="badge" style="background:${tierColors[d.tier] || 'var(--muted)'}20;color:${tierColors[d.tier] || 'var(--muted)'};">${d.tier}</span>
+<span class="badge" style="background:${statusColor}20;color:${statusColor};">${d.availability_status === 'available' ? 'Available' : 'Pending verification'}</span>
+</div>
+
+<div class="grid">
+<div class="stat"><div class="v">${d.potential_score}</div><div class="l">Score${d.score_version ? ` (v${d.score_version})` : ''}</div></div>
+${d.predicted_price_usd ? `<div class="stat"><div class="v" style="color:#34d399;">$${d.predicted_price_usd.toLocaleString()}</div><div class="l">Est. Price (${d.price_confidence})</div><div style="font-size:0.75rem;color:var(--muted);">$${d.price_low_usd?.toLocaleString()}-$${d.price_high_usd?.toLocaleString()}</div></div>` : ''}
+<div class="stat"><div class="v">${d.brand_score || 0}</div><div class="l">Brandability</div></div>
+<div class="stat"><div class="v">${d.estimated_age_years ? d.estimated_age_years + 'y' : '-'}</div><div class="l">Age</div></div>
+<div class="stat"><div class="v">${d.wayback_snapshots || 0}</div><div class="l">Wayback</div></div>
+<div class="stat"><div class="v">${tldSales?.c || 0}</div><div class="l">${d.tld} sales tracked</div></div>
+</div>
+
+<h2 style="font-size:1.2rem;margin:24px 0 8px;">Why this domain?</h2>
+<p style="color:var(--muted);line-height:1.8;">${whyText}</p>
+
+${compRows ? `<h2 style="font-size:1.2rem;margin:24px 0 8px;">Comparable Sales${compAvg?.cnt ? ` (avg $${Math.round(compAvg.avg).toLocaleString()})` : ''}</h2>
+<table><tr><th>Domain</th><th>Price</th><th>Source</th></tr>${compRows}</table>` : ''}
+
+<h2 style="font-size:1.2rem;margin:24px 0 8px;">Score Breakdown</h2>
+<div style="margin-bottom:24px;">
+<div style="display:flex;align-items:center;gap:8px;margin:6px 0;"><span style="width:80px;font-size:0.85rem;color:var(--muted);">Base</span><div class="bar" style="flex:1;background:var(--border);"><div class="bar" style="width:${Math.min(100, (d.potential_score - (d.brand_score || 0)) / 0.45)}%;background:var(--accent);"></div></div><span style="font-size:0.85rem;">${Math.max(0, d.potential_score - (d.brand_score || 0))}</span></div>
+<div style="display:flex;align-items:center;gap:8px;margin:6px 0;"><span style="width:80px;font-size:0.85rem;color:var(--muted);">Brand</span><div class="bar" style="flex:1;background:var(--border);"><div class="bar" style="width:${Math.min(100, (d.brand_score || 0) / 0.55)}%;background:#a78bfa;"></div></div><span style="font-size:0.85rem;">${d.brand_score || 0}</span></div>
+</div>
+
+<div style="display:flex;gap:12px;margin:32px 0;">
+${d.availability_status === 'available' ? `<a href="https://dash.cloudflare.com/?to=/:account/domains/register/${fqdn}" target="_blank" class="btn btn-primary">Buy at Cloudflare</a>` : ''}
+<a href="/marketplace" class="btn btn-outline">Browse more domains</a>
+</div>
+
+<footer style="margin-top:48px;padding-top:24px;border-top:1px solid var(--border);color:var(--muted);font-size:0.85rem;">
+<a href="/">EyeCX</a> · <a href="/marketplace">Marketplace</a> · <a href="/blog">Blog</a> · Built on Cloudflare. Powered by ICANN CZDS.
+</footer>
+</div>
+</body>
+</html>`;
+
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
+  });
 }
 
 // ============ PUBLIC API KEY AUTH ============

@@ -2616,7 +2616,7 @@
                          <span style="font-size:0.7rem;color:${confColor[d.price_confidence]||'var(--muted)'};margin-left:2px;">${d.price_confidence === 'high' ? '***' : d.price_confidence === 'medium' ? '**' : '*'}</span></span>`
                     : '<span style="color:var(--muted);font-size:0.8rem;">-</span>';
                 return `<tr>
-                <td><strong style="cursor:pointer;color:var(--accent);" onclick="showDomainModal('${d.domain}')">${d.domain}</strong></td>
+                <td><a href="/marketplace/domain/${d.domain}" style="color:var(--accent);font-weight:600;">${d.domain}</a></td>
                 <td>${d.tld}</td>
                 <td><span style="color:${tierColors[d.tier]||'var(--muted)'};font-weight:600;">${d.tier}</span></td>
                 <td>${d.potential_score}</td>
