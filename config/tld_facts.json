@@ -1,0 +1,20 @@
+{
+  "xyz": {
+    "launched": 2014,
+    "operator": "XYZ.COM LLC",
+    "primary_use": "General purpose gTLD positioned as an alternative to .com. Popular with tech startups and younger demographics. One of the largest new gTLDs by registration volume.",
+    "registration_cost": "$1-12/year"
+  },
+  "info": {
+    "launched": 2001,
+    "operator": "Identity Digital (formerly Afilias)",
+    "primary_use": "Originally intended for informational sites. Widely used across industries for content-heavy domains, resource pages, and knowledge bases.",
+    "registration_cost": "$2-15/year"
+  },
+  "org": {
+    "launched": 1985,
+    "operator": "Public Interest Registry (PIR)",
+    "primary_use": "One of the original TLDs, traditionally associated with non-profit organizations, open-source projects, and community initiatives. Carries strong trust signals due to its age and association with established institutions.",
+    "registration_cost": "$8-15/year"
+  }
+}

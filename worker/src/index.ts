@@ -293,6 +293,7 @@ export default {
 <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <sitemap><loc>https://eyecx.com/sitemap-blog.xml</loc><lastmod>${now}</lastmod></sitemap>
   <sitemap><loc>https://eyecx.com/sitemap-domains.xml</loc><lastmod>${now}</lastmod></sitemap>
+  <sitemap><loc>https://eyecx.com/sitemap-tlds.xml</loc><lastmod>${now}</lastmod></sitemap>
 </sitemapindex>`;
       return new Response(xml, { headers: { 'Content-Type': 'application/xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
     }
@@ -346,6 +347,16 @@ export default {
         entries.push(`  <url><loc>${base}/marketplace/domain/${d.domain}</loc><lastmod>${mod}</lastmod><changefreq>daily</changefreq><priority>0.7</priority></url>`);
       }
 
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.join('\n')}\n</urlset>`;
+      return new Response(xml, { headers: { 'Content-Type': 'application/xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
+    }
+
+    // GET /sitemap-tlds.xml - TLD explainer pages sitemap
+    if (path === '/sitemap-tlds.xml' && request.method === 'GET') {
+      const base = 'https://eyecx.com';
+      const now = new Date().toISOString().split('T')[0];
+      const tlds = Object.keys(TLD_FACTS);
+      const entries = tlds.map(t => `  <url><loc>${base}/tld/${t}</loc><lastmod>${now}</lastmod><changefreq>daily</changefreq><priority>0.8</priority></url>`);
       const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.join('\n')}\n</urlset>`;
       return new Response(xml, { headers: { 'Content-Type': 'application/xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
     }
@@ -1192,6 +1203,11 @@ export default {
       }
 
       return json({ checked, available, registered, remaining: domains.length - checked });
+    }
+
+    // ============ TLD EXPLAINER PAGE ============
+    if (path.match(/^\/tld\/[a-z]{2,}$/) && request.method === 'GET') {
+      return await renderTldPage(path.split('/')[2], env);
     }
 
     // ============ SERVER-RENDERED DOMAIN PAGE ============
@@ -3300,6 +3316,177 @@ ${d.availability_status === 'available' ? `<a href="https://dash.cloudflare.com/
 
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
+  });
+}
+
+// ============ TLD FACTS (embedded) ============
+const TLD_FACTS: Record<string, { launched: number; operator: string; primary_use: string; registration_cost: string }> = {
+  xyz: { launched: 2014, operator: 'XYZ.COM LLC', primary_use: 'General purpose gTLD positioned as an alternative to .com. Popular with tech startups and younger demographics.', registration_cost: '$1-12/year' },
+  info: { launched: 2001, operator: 'Identity Digital', primary_use: 'Originally intended for informational sites. Widely used for content-heavy domains, resource pages, and knowledge bases.', registration_cost: '$2-15/year' },
+  org: { launched: 1985, operator: 'Public Interest Registry', primary_use: 'One of the original TLDs, traditionally associated with non-profit organizations, open-source projects, and community initiatives.', registration_cost: '$8-15/year' },
+};
+
+// ============ TLD EXPLAINER PAGE ============
+
+async function renderTldPage(tld: string, env: Env): Promise<Response> {
+  const dotTld = '.' + tld;
+
+  // Check TLD exists in R2 snapshots
+  const snap = await env.ZONES.head(`snapshots/${tld}/`);
+  const listed = await env.ZONES.list({ prefix: `snapshots/${tld}/`, limit: 1 });
+  if (!listed.objects?.length && !listed.delimitedPrefixes?.length) {
+    // Check if any domains exist for this TLD
+    const domCount = await env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE tld = ? AND availability_status != 'registered'").bind(dotTld).first<{c:number}>();
+    if (!domCount || domCount.c === 0) return new Response('TLD not found', { status: 404 });
+  }
+
+  const now = new Date().toISOString().split('T')[0];
+
+  // Fetch all data in parallel
+  const [availCount, salesStats, salesRecent, topDomains, articles, lengthBuckets] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE tld = ? AND availability_status = 'available'").bind(dotTld).first<{c:number}>(),
+    env.DB.prepare('SELECT COUNT(*) as cnt, AVG(sale_price_usd) as avg, MIN(sale_price_usd) as min_p, MAX(sale_price_usd) as max_p FROM market_sales WHERE tld = ?').bind(dotTld).first<{cnt:number;avg:number;min_p:number;max_p:number}>(),
+    env.DB.prepare('SELECT domain, sale_price_usd, source_name, extracted_at FROM market_sales WHERE tld = ? ORDER BY extracted_at DESC LIMIT 10').bind(dotTld).all<any>(),
+    env.DB.prepare("SELECT domain, potential_score, tier, brand_score, predicted_price_usd, price_confidence FROM domains WHERE tld = ? AND availability_status = 'available' ORDER BY potential_score DESC LIMIT 12").bind(dotTld).all<any>(),
+    env.DB.prepare("SELECT title, url, source_name, published_at FROM curated_content WHERE status = 'published' AND hidden = 0 AND (title LIKE ? OR excerpt LIKE ?) AND (categories LIKE '%sale-report%' OR categories LIKE '%market-analysis%') ORDER BY published_at DESC LIMIT 5").bind(`%.${tld}%`, `%.${tld}%`).all<any>(),
+    env.DB.prepare(`SELECT CASE WHEN LENGTH(REPLACE(domain, ?, '')) - 1 <= 4 THEN 'short' WHEN LENGTH(REPLACE(domain, ?, '')) - 1 <= 7 THEN 'medium' ELSE 'long' END as bucket, AVG(sale_price_usd) as avg, COUNT(*) as c FROM market_sales WHERE tld = ? GROUP BY bucket`).bind(dotTld, dotTld, dotTld).all<any>(),
+  ]);
+
+  const avail = availCount?.c || 0;
+  const salesCnt = salesStats?.cnt || 0;
+  const salesAvg = salesStats?.avg ? Math.round(salesStats.avg) : 0;
+  const facts = TLD_FACTS[tld];
+  const canonical = `https://eyecx.com/tld/${tld}`;
+  const descStr = `Drop .${tld} domain analysis: ${avail} available now, ${salesCnt} comparable sales tracked${salesAvg ? `, avg sale price $${salesAvg.toLocaleString()}` : ''}. Live data from EyeCX.`;
+
+  // Word count check
+  let wordCount = 0;
+
+  // Build sections
+  let sections = '';
+
+  // 1. Hero
+  const heroText = `<h1>.${tld} Domain Drops</h1>
+<p style="color:var(--muted);font-size:1.1rem;margin:12px 0 24px;">${avail} available drops · ${salesCnt} sales tracked · updated ${now}</p>`;
+  wordCount += 20;
+
+  // 2. Recent sales
+  let salesSection = '';
+  if (salesCnt > 0) {
+    const rows = (salesRecent.results || []).map((s: any) =>
+      `<tr><td>${s.domain}</td><td style="color:#34d399;font-weight:600;">$${s.sale_price_usd?.toLocaleString()}</td><td>${s.source_name || ''}</td><td>${s.extracted_at?.split(' ')[0] || ''}</td></tr>`
+    ).join('');
+    salesSection = `<h2 style="margin:32px 0 12px;">Recent .${tld} Sales</h2>
+<p style="color:var(--muted);margin-bottom:12px;">Recent .${tld} sales averaged $${salesAvg.toLocaleString()} (${salesCnt} total tracked).</p>
+<table><tr><th>Domain</th><th>Price</th><th>Source</th><th>Date</th></tr>${rows}</table>`;
+    wordCount += 30 + salesCnt * 5;
+  }
+
+  // 3. Price analysis
+  let priceSection = '';
+  if (salesCnt >= 5) {
+    const bucketRows = (lengthBuckets.results || []).map((b: any) =>
+      `<tr><td>${b.bucket} (${b.bucket === 'short' ? '≤4' : b.bucket === 'medium' ? '5-7' : '8+'} chars)</td><td>$${Math.round(b.avg).toLocaleString()}</td><td>${b.c}</td></tr>`
+    ).join('');
+    priceSection = `<h2 style="margin:32px 0 12px;">.${tld} Price Analysis</h2>
+<p style="color:var(--muted);margin-bottom:12px;">Based on ${salesCnt} sales tracked. More data improves accuracy.</p>
+<table><tr><th>Length</th><th>Avg Price</th><th>Sales</th></tr>${bucketRows}</table>`;
+    wordCount += 40;
+  }
+
+  // 4. Available domains
+  let availSection = '';
+  const doms = topDomains.results || [];
+  if (doms.length > 0) {
+    const cards = doms.map((d: any) => {
+      const price = d.predicted_price_usd ? `$${d.predicted_price_usd.toLocaleString()}` : '';
+      return `<a href="/marketplace/domain/${d.domain}" style="display:block;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;text-decoration:none;">
+<span style="color:var(--accent);font-weight:600;">${d.domain}</span>
+<span style="color:var(--muted);font-size:0.85rem;margin-left:8px;">score ${d.potential_score} ${price}</span></a>`;
+    }).join('');
+    availSection = `<h2 style="margin:32px 0 12px;">Available .${tld} Drops</h2>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">${cards}</div>
+<p style="margin-top:12px;"><a href="/marketplace?tld=${dotTld}" style="color:var(--accent);">View all .${tld} domains →</a></p>`;
+    wordCount += 20 + doms.length * 3;
+  }
+
+  // 5. Industry coverage
+  let coverageSection = '';
+  const arts = articles.results || [];
+  if (arts.length > 0) {
+    const artList = arts.map((a: any) =>
+      `<li style="margin:8px 0;"><a href="${a.url}" target="_blank" rel="noopener" style="color:var(--accent);">${a.title}</a> <span style="color:var(--muted);font-size:0.85rem;">— ${a.source_name}, ${a.published_at?.slice(0,10) || ''}</span></li>`
+    ).join('');
+    coverageSection = `<h2 style="margin:32px 0 12px;">Recent .${tld} Coverage</h2><ul style="list-style:none;padding:0;">${artList}</ul>`;
+    wordCount += 15 + arts.length * 10;
+  }
+
+  // 6. TLD basics
+  let basicsSection = '';
+  if (facts) {
+    basicsSection = `<h2 style="margin:32px 0 12px;">About .${tld}</h2>
+<p style="color:var(--text);line-height:1.8;">The .${tld} extension was launched in ${facts.launched} and is operated by ${facts.operator}. ${facts.primary_use} Registration typically costs ${facts.registration_cost}.</p>`;
+    wordCount += 40;
+  }
+
+  // 7. FAQ
+  const faqs: Array<{q:string;a:string}> = [];
+  faqs.push({ q: `How much do .${tld} domains sell for?`, a: salesCnt >= 3 ? `Based on ${salesCnt} tracked sales, .${tld} domains sell for an average of $${salesAvg.toLocaleString()}. Prices vary significantly based on length, brandability, and existing backlink authority.` : `We're still gathering data on .${tld} sales. As more transactions are tracked, pricing insights will improve.` });
+  faqs.push({ q: `Are .${tld} domains good for SEO?`, a: `Search engines treat .${tld} the same as other gTLDs for ranking purposes. Domain authority depends on content quality and backlinks, not the TLD itself. Short, brandable .${tld} domains can rank well when built out properly.` });
+  faqs.push({ q: `How do I check .${tld} domain availability?`, a: `Use the EyeCX marketplace to browse verified-available .${tld} drops. Each domain is checked via RDAP before listing. You can also check availability directly through Cloudflare Registrar.` });
+  if (avail > 0) faqs.push({ q: `How many .${tld} domains are available right now?`, a: `Currently ${avail} verified-available .${tld} drop domains are listed on EyeCX, scored across 7 signals including Wayback history, PageRank, and brandability.` });
+  wordCount += faqs.length * 40;
+
+  const faqHtml = faqs.map(f => `<div style="margin:16px 0;"><h3 style="font-size:1rem;margin-bottom:6px;">${f.q}</h3><p style="color:var(--muted);line-height:1.7;">${f.a}</p></div>`).join('');
+  const faqJsonLd = JSON.stringify({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faqs.map(f => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) });
+  const breadcrumbLd = JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [{ '@type': 'ListItem', position: 1, name: 'Home', item: 'https://eyecx.com' }, { '@type': 'ListItem', position: 2, name: `.${tld} Domains`, item: canonical }] });
+
+  // Word count check
+  if (wordCount < 300) {
+    return new Response(`Insufficient data to generate .${tld} page (${wordCount} words). Check back as more data is collected.`, { status: 503 });
+  }
+
+  sections = heroText + salesSection + priceSection + availSection + coverageSection + basicsSection + `<h2 style="margin:32px 0 12px;">Frequently Asked Questions</h2>${faqHtml}`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>.${tld} Domain Drops — Prices, Sales Data, and Available Inventory | EyeCX</title>
+<meta name="description" content="${descStr}">
+<link rel="canonical" href="${canonical}">
+<meta property="og:title" content=".${tld} Domain Drops | EyeCX">
+<meta property="og:description" content="${descStr}">
+<meta property="og:url" content="${canonical}">
+<meta property="og:image" content="https://eyecx.com/assets/og-image.png">
+<script type="application/ld+json">${faqJsonLd}</script>
+<script type="application/ld+json">${breadcrumbLd}</script>
+<style>
+:root{--bg:#0a0a0f;--surface:#12121a;--border:#1e1e2e;--text:#e4e4e7;--muted:#71717a;--accent:#22d3ee;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:24px;}
+.container{max-width:800px;margin:0 auto;}
+a{color:var(--accent);text-decoration:none;}
+table{width:100%;border-collapse:collapse;margin:12px 0;}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);}
+th{color:var(--muted);font-size:0.8rem;text-transform:uppercase;}
+</style>
+</head>
+<body>
+<div class="container">
+<p style="margin-bottom:16px;"><a href="/">Home</a> → <a href="/marketplace">Marketplace</a> → .${tld}</p>
+${sections}
+<p style="margin-top:32px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:0.85rem;">Data updated daily from ICANN CZDS. Market sales tracked from DNJournal, NamePros, DomainInvesting.</p>
+<footer style="margin-top:24px;color:var(--muted);font-size:0.85rem;">
+<a href="/">EyeCX</a> · <a href="/marketplace">Marketplace</a> · <a href="/blog">Blog</a>
+${Object.keys(TLD_FACTS).filter(t => t !== tld).map(t => `· <a href="/tld/${t}">.${t}</a>`).join(' ')}
+</footer>
+</div>
+</body>
+</html>`;
+
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=21600' },
   });
 }
 
