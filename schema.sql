@@ -244,3 +244,14 @@ CREATE TABLE IF NOT EXISTS ingest_rejections (
     rejected_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_rejections_date ON ingest_rejections(rejected_at DESC);
+
+-- Admin activity events (unified feed for dashboard)
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    target TEXT,
+    message TEXT NOT NULL,
+    ts TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);

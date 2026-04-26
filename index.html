@@ -947,6 +947,7 @@
     <div id="view-admin" class="app-view">
         <div class="container">
             <h2>Admin Dashboard</h2>
+            <div id="admin-home-dashboard"></div>
             <div id="admin-stats" class="stats-grid"></div>
             <div class="tab-bar" id="admin-tabs">
                 <button class="active" data-tab="admin-domains">Domains</button>
@@ -1335,10 +1336,149 @@
     }
 
     // ============ ADMIN ============
+    let dashboardInterval = null;
+
+    async function loadAdminDashboard() {
+        const el = document.getElementById('admin-home-dashboard');
+        if (!el) return;
+        // Show skeleton on first load only
+        if (!el.dataset.loaded) {
+            el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:24px;">
+                ${Array(4).fill('<div class="stat-card" style="min-height:80px;"><div class="val" style="color:var(--muted)">...</div><div class="lbl">Loading</div></div>').join('')}
+            </div>`;
+        }
+        try {
+            const resp = await apiFetch('/api/admin/dashboard');
+            const d = await resp.json();
+            el.dataset.loaded = '1';
+            const p = d.pipeline || {};
+            const c = d.counts || {};
+            const evts = d.activity || [];
+            const flags = d.red_flags || [];
+
+            // Event type icons
+            const icons = { domains_added: '\u{1F4E5}', rescore: '\u{1F504}', alert_triggered: '\u{1F6A8}', alert_resolved: '\u2705',
+                job_completed: '\u2699\uFE0F', feedback: '\u{1F44D}', sales_extracted: '\u{1F4B0}', source_approved: '\u{1F4F0}',
+                rdap_verify: '\u{1F50D}' };
+            // Event type -> tab mapping
+            const tabMap = { domains_added: 'admin-domains', rescore: 'admin-movers', alert_triggered: 'admin-alerts',
+                alert_resolved: 'admin-alerts', job_completed: 'admin-jobs', feedback: 'admin-domains',
+                sales_extracted: 'admin-sales', source_approved: 'admin-sources', rdap_verify: 'admin-domains' };
+
+            const ago = (ts) => {
+                if (!ts) return 'never';
+                const diff = (Date.now() - new Date(ts + 'Z').getTime()) / 1000;
+                if (diff < 60) return 'just now';
+                if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+                if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+                return Math.floor(diff/86400) + 'd ago';
+            };
+
+            const scanOk = p.daily_scan?.last_date && (Date.now() - new Date(p.daily_scan.last_run + 'Z').getTime()) < 86400000 * 2;
+            const badge = (ok) => ok ? '<span style="color:var(--success);font-weight:600;">OK</span>' : '<span style="color:#f87171;font-weight:600;">STALE</span>';
+
+            el.innerHTML = `
+                <div style="margin-bottom:24px;">
+                    <h3 style="margin-bottom:12px;color:var(--muted);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.5px;">Pipeline Status</h3>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;">
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-domains')">
+                            <div class="lbl">Daily Scan ${badge(scanOk)}</div>
+                            <div class="val" style="font-size:1.3rem;">${p.daily_scan?.qualified || 0} <span style="font-size:0.8rem;color:var(--muted);">qualified</span></div>
+                            <div style="color:var(--muted);font-size:0.75rem;">${ago(p.daily_scan?.last_run)} · ${p.daily_scan?.duration_sec || 0}s</div>
+                        </div>
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-curated')">
+                            <div class="lbl">RSS Curation ${badge(p.rss_curation?.last_run)}</div>
+                            <div class="val" style="font-size:1.3rem;">${p.rss_curation?.articles_24h || 0} <span style="font-size:0.8rem;color:var(--muted);">new 24h</span></div>
+                            <div style="color:var(--muted);font-size:0.75rem;">${ago(p.rss_curation?.last_run)}</div>
+                        </div>
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-sales')">
+                            <div class="lbl">Sales Extraction</div>
+                            <div class="val" style="font-size:1.3rem;">${p.sales?.total || 0} <span style="font-size:0.8rem;color:var(--muted);">total</span></div>
+                            <div style="color:var(--muted);font-size:0.75rem;">${p.sales?.last_24h || 0} in last 24h</div>
+                        </div>
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-domains')">
+                            <div class="lbl">RDAP Verify</div>
+                            <div class="val" style="font-size:1.3rem;">${c.domains?.available || 0} <span style="font-size:0.8rem;color:var(--muted);">available</span></div>
+                            <div style="color:var(--muted);font-size:0.75rem;">${p.rdap?.total_verified || 0} verified · ${p.rdap?.grace_period || 0} grace · +${p.rdap?.new_available_24h || 0} 24h</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom:24px;">
+                    <h3 style="margin-bottom:12px;color:var(--muted);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.5px;">Live Counts</h3>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;">
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-domains')">
+                            <div class="val" style="color:var(--success)">${c.domains?.available || 0}</div><div class="lbl">Available</div>
+                            <div style="color:var(--muted);font-size:0.7rem;">${c.domains?.grace_period || 0} grace · ${c.domains?.registered || 0} reg · ${c.domains?.unknown || 0} unk</div>
+                        </div>
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-sales')">
+                            <div class="val">${c.sales?.total || 0}</div><div class="lbl">Sales Tracked</div>
+                            <div style="color:var(--muted);font-size:0.7rem;">+${c.sales?.this_week || 0} this week</div>
+                        </div>
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-curated')">
+                            <div class="val">${c.curated?.total || 0}</div><div class="lbl">Curated Articles</div>
+                            <div style="color:var(--muted);font-size:0.7rem;">+${c.curated?.this_week || 0} this week</div>
+                        </div>
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-alerts')">
+                            <div class="val" style="color:${c.alerts?.active > 0 ? '#f87171' : 'var(--muted)'}">${c.alerts?.active || 0}</div><div class="lbl">Active Alerts</div>
+                            <div style="color:var(--muted);font-size:0.7rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.alerts?.most_recent ? ago(c.alerts.most_recent_at) + ': ' + c.alerts.most_recent.slice(0,40) : 'None'}</div>
+                        </div>
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-apikeys')">
+                            <div class="val">${c.api_keys?.active || 0}</div><div class="lbl">API Keys</div>
+                            <div style="color:var(--muted);font-size:0.7rem;">${c.api_keys?.requests_24h || 0} requests 24h</div>
+                        </div>
+                        <div class="stat-card" style="cursor:pointer;" onclick="switchTab('admin-jobs')">
+                            <div class="val">${c.jobs?.queued || 0}/${c.jobs?.running || 0}/${c.jobs?.failed_24h || 0}</div><div class="lbl">Jobs Q/R/F</div>
+                            <div style="color:var(--muted);font-size:0.7rem;">queued / running / failed 24h</div>
+                        </div>
+                    </div>
+                </div>
+
+                ${flags.length > 0 ? `<div style="margin-bottom:24px;padding:16px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.3);border-radius:8px;">
+                    <h3 style="margin-bottom:10px;color:#f87171;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.5px;">\u26A0 Red Flags (${flags.length})</h3>
+                    ${flags.map(f => `<div style="padding:6px 0;border-bottom:1px solid rgba(248,113,113,0.15);font-size:0.85rem;cursor:pointer;color:var(--text);" onclick="switchTab('${f.tab}')">
+                        <span style="color:#f87171;font-weight:600;">${f.type}</span> — ${f.message}
+                    </div>`).join('')}
+                </div>` : ''}
+
+                <div style="margin-bottom:24px;">
+                    <h3 style="margin-bottom:12px;color:var(--muted);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.5px;">Activity Feed</h3>
+                    ${evts.length > 0 ? `<div style="max-height:400px;overflow-y:auto;">
+                        ${evts.map(e => `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.85rem;cursor:pointer;align-items:center;" onclick="switchTab('${tabMap[e.type] || 'admin-domains'}')">
+                            <span style="font-size:1.1rem;flex-shrink:0;">${icons[e.type] || '\u{1F4CB}'}</span>
+                            <span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${e.message}</span>
+                            <span style="flex-shrink:0;color:var(--muted);font-size:0.75rem;">${ago(e.ts)}</span>
+                        </div>`).join('')}
+                    </div>` : '<p style="color:var(--muted);font-size:0.9rem;">No activity yet. Events appear as domains are scored, sales extracted, and alerts triggered.</p>'}
+                </div>
+                <div style="text-align:right;color:var(--muted);font-size:0.7rem;">Auto-refreshes every 60s · ${new Date().toLocaleTimeString()}</div>
+            `;
+        } catch (e) {
+            if (!el.dataset.loaded) el.innerHTML = '<p style="color:#f87171;">Failed to load dashboard.</p>';
+        }
+    }
+
+    function switchTab(tabId) {
+        const allTabs = ['admin-domains','admin-curated','admin-sales','admin-movers','admin-tuning','admin-jobs','admin-cstats','admin-sources','admin-apikeys','admin-alerts','admin-threads','admin-users','admin-content','admin-waitlist'];
+        document.querySelectorAll('#admin-tabs button').forEach(b => {
+            b.classList.toggle('active', b.dataset.tab === tabId);
+        });
+        allTabs.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = id === tabId ? '' : 'none';
+        });
+    }
+
     async function loadAdmin() {
         const user = await checkAuth();
         if (!user || user.role !== 'admin') { navigate('/login'); return; }
         document.getElementById('view-admin').classList.add('active');
+
+        // Load dashboard home summary first
+        await loadAdminDashboard();
+        // Auto-refresh every 60s
+        if (dashboardInterval) clearInterval(dashboardInterval);
+        dashboardInterval = setInterval(loadAdminDashboard, 60000);
 
         const [statsResp, fbResp] = await Promise.all([
             apiFetch('/api/admin/stats'),

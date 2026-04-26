@@ -72,6 +72,11 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+// Event logging helper (fire-and-forget, never throws)
+function logEvent(env: Env, type: string, target: string | null, message: string): void {
+  env.DB.prepare('INSERT INTO events (type, target, message) VALUES (?, ?, ?)').bind(type, target, message).run().catch(() => {});
+}
+
 // Response helpers
 function json(data: any, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -523,6 +528,23 @@ export default {
       return await adminStats(env);
     }
 
+    // GET /api/admin/dashboard - Full admin home summary (single batched query)
+    if (path === '/api/admin/dashboard' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      return await adminDashboard(env);
+    }
+
+    // POST /api/admin/events - Record an event (internal use)
+    if (path === '/api/admin/events' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const { type, target, message } = await request.json() as any;
+      if (!type || !message) return json({ error: 'type and message required' }, 400);
+      await env.DB.prepare('INSERT INTO events (type, target, message) VALUES (?, ?, ?)').bind(type, target || null, message).run();
+      return json({ ok: true });
+    }
+
     // POST /api/admin/feedback - Record domain feedback
     if (path === '/api/admin/feedback' && request.method === 'POST') {
       const [user, err] = await requireAdmin(request, env);
@@ -533,6 +555,7 @@ export default {
       await env.DB.prepare(
         'INSERT INTO domain_feedback (domain, signal, note, created_by) VALUES (?, ?, ?, ?)'
       ).bind(domain, signal, note || null, user!.id).run();
+      logEvent(env, 'feedback', domain, `Feedback: ${signal} on ${domain}`);
       return json({ ok: true, domain, signal });
     }
 
@@ -621,6 +644,7 @@ export default {
       const [user, err] = await requireAdmin(request, env);
       if (err) return err;
       const result = await runDomainRescore(env);
+      logEvent(env, 'rescore', null, `Rescore completed: ${(result as any).rescored || 0} domains rescored`);
       return json(result);
     }
 
@@ -668,6 +692,7 @@ export default {
       const [user, err] = await requireAdmin(request, env);
       if (err) return err;
       const result = await runSalesExtraction(env);
+      logEvent(env, 'sales_extracted', null, `Sales extraction: ${(result as any).extracted || 0} new sales`);
       return json(result);
     }
 
@@ -830,6 +855,7 @@ export default {
       await env.DB.prepare(
         "UPDATE alerts SET resolved_at = datetime('now'), resolved_by = ? WHERE id = ?"
       ).bind(user!.id, id).run();
+      logEvent(env, 'alert_resolved', String(id), `Alert #${id} resolved`);
       return json({ ok: true, id, resolved: true });
     }
 
@@ -862,6 +888,7 @@ export default {
       const { type, severity, message: msg } = await request.json() as { type: string; severity: string; message: string };
       if (!type || !msg) return error('type and message required');
       const sent = await createAlert(env, type, severity || 'warning', msg);
+      if (sent) logEvent(env, 'alert_triggered', type, `Alert: ${msg}`);
       return json({ ok: true, sent });
     }
 
@@ -897,6 +924,7 @@ export default {
       ).bind(srcId, cand.name, cand.url, cand.feed_url).run();
       await env.DB.prepare("UPDATE source_candidates SET status = 'approved', reviewed_by = ?, reviewed_at = datetime('now') WHERE id = ?")
         .bind(user!.id, id).run();
+      logEvent(env, 'source_approved', cand.name, `Source approved: ${cand.name}`);
       return json({ ok: true, source_id: srcId });
     }
 
@@ -989,10 +1017,12 @@ export default {
 
       const id = parseInt(path.split('/')[4]);
       const { status, summary } = await request.json() as { status: string; summary: string };
+      const finalStatus = status === 'success' ? 'success' : 'failed';
       await env.DB.prepare(
         "UPDATE bulk_jobs SET status = ?, result_summary = ?, completed_at = datetime('now') WHERE id = ?"
-      ).bind(status === 'success' ? 'success' : 'failed', (summary || '').slice(0, 2000), id).run();
-      return json({ ok: true, id, status });
+      ).bind(finalStatus, (summary || '').slice(0, 2000), id).run();
+      logEvent(env, 'job_completed', String(id), `Job #${id} ${finalStatus}: ${(summary || '').slice(0, 100)}`);
+      return json({ ok: true, id, status: finalStatus });
     }
 
     // POST /api/admin/jobs/:id/cancel - Cancel a running job
@@ -1231,6 +1261,7 @@ export default {
         if (i + 10 < domains.length) await new Promise(r => setTimeout(r, 1000));
       }
 
+      if (checked > 0) logEvent(env, 'rdap_verify', null, `RDAP batch: ${checked} checked, ${available} available, ${grace_period} grace, ${registered} registered`);
       return json({ checked, available, registered, grace_period, remaining: domains.length - checked });
     }
 
@@ -1460,6 +1491,7 @@ export default {
             inserted++;
           } catch {}
         }
+        if (inserted > 0) logEvent(env, 'domains_added', null, `${inserted} domains added (${rejected} rejected) from bulk upload`);
         return json({ ok: true, inserted, rejected, total: rows.length });
       }
 
@@ -2258,6 +2290,148 @@ async function adminStats(env: Env): Promise<Response> {
     comments: comments?.c || 0,
     curated: curated?.c || 0,
     waitlist: waitlist?.c || 0,
+  });
+}
+
+// GET /api/admin/dashboard - Full admin home summary
+async function adminDashboard(env: Env): Promise<Response> {
+  const now = new Date().toISOString();
+  const ago24h = new Date(Date.now() - 86400000).toISOString();
+  const ago48h = new Date(Date.now() - 172800000).toISOString();
+  const agoWeek = new Date(Date.now() - 604800000).toISOString();
+  const ago4h = new Date(Date.now() - 14400000).toISOString();
+
+  // Batch all queries in parallel
+  const [
+    // Section 1: Pipeline status
+    lastScan, lastCuration, salesTotal, sales24h, rdapTotal, rdapGrace, rdapDelta,
+    // Section 2: Live counts
+    domAvail, domGrace, domRegistered, domUnknown,
+    salesTracked, salesWeek, curatedTotal, curatedWeek,
+    alertsActive, alertsRecent, apiKeysActive, apiRequests24h,
+    jobsQueued, jobsRunning, jobsFailed,
+    // Section 3: Activity feed
+    recentEvents,
+    // Section 4: Red flags
+    failingSources, stuckJobs, unresolvedAlerts,
+  ] = await Promise.all([
+    // Pipeline status
+    env.DB.prepare('SELECT scan_date, total_qualified, duration_sec, created_at FROM scan_history ORDER BY scan_date DESC LIMIT 1').first<any>(),
+    env.DB.prepare("SELECT MAX(extracted_at) as last_run, COUNT(CASE WHEN extracted_at > ? THEN 1 END) as recent FROM curated_content WHERE extracted_at IS NOT NULL").bind(ago24h).first<any>(),
+    env.DB.prepare('SELECT COUNT(*) as c FROM market_sales').first<{c:number}>(),
+    env.DB.prepare('SELECT COUNT(*) as c FROM market_sales WHERE extracted_at > ?').bind(ago24h).first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE rdap_status IS NOT NULL AND rdap_status != ''").first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'grace_period'").first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'available' AND first_seen > ?").bind(ago24h).first<{c:number}>(),
+    // Live counts
+    env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'available'").first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'grace_period'").first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'registered'").first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'unknown'").first<{c:number}>(),
+    env.DB.prepare('SELECT COUNT(*) as c FROM market_sales').first<{c:number}>(),
+    env.DB.prepare('SELECT COUNT(*) as c FROM market_sales WHERE extracted_at > ?').bind(agoWeek).first<{c:number}>(),
+    env.DB.prepare('SELECT COUNT(*) as c FROM curated_content').first<{c:number}>(),
+    env.DB.prepare('SELECT COUNT(*) as c FROM curated_content WHERE extracted_at > ?').bind(agoWeek).first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM alerts WHERE resolved_at IS NULL").first<{c:number}>(),
+    env.DB.prepare('SELECT message, triggered_at FROM alerts ORDER BY triggered_at DESC LIMIT 1').first<any>(),
+    env.DB.prepare('SELECT COUNT(*) as c FROM api_keys WHERE active = 1').first<{c:number}>(),
+    env.DB.prepare('SELECT COUNT(*) as c FROM api_usage WHERE ts > ?').bind(ago24h).first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM bulk_jobs WHERE status = 'queued'").first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM bulk_jobs WHERE status = 'running'").first<{c:number}>(),
+    env.DB.prepare("SELECT COUNT(*) as c FROM bulk_jobs WHERE status = 'failed' AND created_at > ?").bind(ago24h).first<{c:number}>(),
+    // Activity feed
+    env.DB.prepare('SELECT type, target, message, ts FROM events ORDER BY ts DESC LIMIT 20').all<any>(),
+    // Red flags
+    env.DB.prepare("SELECT name, health_status FROM curated_sources WHERE enabled = 1 AND health_status IN ('failing', 'dead')").all<any>(),
+    env.DB.prepare("SELECT id, task_type, started_at FROM bulk_jobs WHERE status = 'running' AND started_at < ?").bind(ago4h).all<any>(),
+    env.DB.prepare("SELECT id, type, message, triggered_at FROM alerts WHERE resolved_at IS NULL AND triggered_at < ?").bind(ago24h).all<any>(),
+  ]);
+
+  // Check TLDs with no ingestion in 48h
+  const tldIngestion: {name: string; stale: boolean}[] = [];
+  for (const t of ACTIVE_TLDS) {
+    const listed = await env.ZONES.list({ prefix: `snapshots/${t.name}/`, limit: 1, delimiter: '/' });
+    // Get the most recent object
+    const objs = listed.objects || [];
+    const newest = objs.length > 0 ? objs[objs.length - 1] : null;
+    const isStale = !newest || (newest.uploaded && new Date(newest.uploaded).toISOString() < ago48h);
+    if (isStale && t.class === 'open') tldIngestion.push({ name: t.name, stale: true });
+  }
+
+  // Build red flags
+  const redFlags: {type: string; message: string; tab: string}[] = [];
+  for (const s of (failingSources.results || [])) {
+    redFlags.push({ type: 'source', message: `Source "${s.name}" is ${s.health_status}`, tab: 'admin-sources' });
+  }
+  for (const t of tldIngestion) {
+    redFlags.push({ type: 'ingestion', message: `.${t.name} — no zone ingestion in 48h`, tab: 'admin-domains' });
+  }
+  for (const j of (stuckJobs.results || [])) {
+    redFlags.push({ type: 'job', message: `Job #${j.id} (${j.task_type}) stuck running since ${j.started_at}`, tab: 'admin-jobs' });
+  }
+  for (const a of (unresolvedAlerts.results || [])) {
+    redFlags.push({ type: 'alert', message: `Alert: ${a.message} (since ${a.triggered_at?.slice(0,10)})`, tab: 'admin-alerts' });
+  }
+
+  // Check API key usage spikes (any key with >5x its hourly rate in last hour)
+  const agoHour = new Date(Date.now() - 3600000).toISOString();
+  const spikes = await env.DB.prepare(`
+    SELECT k.label, k.rate_limit_per_hour, COUNT(u.id) as recent
+    FROM api_keys k JOIN api_usage u ON u.key_id = k.id
+    WHERE u.ts > ? AND k.active = 1
+    GROUP BY k.id HAVING recent > k.rate_limit_per_hour * 5
+  `).bind(agoHour).all<any>();
+  for (const s of (spikes.results || [])) {
+    redFlags.push({ type: 'api_spike', message: `API key "${s.label}" — ${s.recent} requests in last hour (limit: ${s.rate_limit_per_hour}/h)`, tab: 'admin-apikeys' });
+  }
+
+  const dashboard = {
+    pipeline: {
+      daily_scan: {
+        last_date: lastScan?.scan_date || null,
+        last_run: lastScan?.created_at || null,
+        qualified: lastScan?.total_qualified || 0,
+        duration_sec: lastScan?.duration_sec || 0,
+      },
+      rss_curation: {
+        last_run: lastCuration?.last_run || null,
+        articles_24h: lastCuration?.recent || 0,
+      },
+      sales: {
+        total: salesTotal?.c || 0,
+        last_24h: sales24h?.c || 0,
+      },
+      rdap: {
+        total_verified: rdapTotal?.c || 0,
+        grace_period: rdapGrace?.c || 0,
+        new_available_24h: rdapDelta?.c || 0,
+      },
+    },
+    counts: {
+      domains: {
+        available: domAvail?.c || 0,
+        grace_period: domGrace?.c || 0,
+        registered: domRegistered?.c || 0,
+        unknown: domUnknown?.c || 0,
+      },
+      sales: { total: salesTracked?.c || 0, this_week: salesWeek?.c || 0 },
+      curated: { total: curatedTotal?.c || 0, this_week: curatedWeek?.c || 0 },
+      alerts: { active: alertsActive?.c || 0, most_recent: alertsRecent?.message || null, most_recent_at: alertsRecent?.triggered_at || null },
+      api_keys: { active: apiKeysActive?.c || 0, requests_24h: apiRequests24h?.c || 0 },
+      jobs: { queued: jobsQueued?.c || 0, running: jobsRunning?.c || 0, failed_24h: jobsFailed?.c || 0 },
+    },
+    activity: (recentEvents.results || []).map((e: any) => ({
+      type: e.type,
+      target: e.target,
+      message: e.message,
+      ts: e.ts,
+    })),
+    red_flags: redFlags,
+    generated_at: now,
+  };
+
+  return new Response(JSON.stringify(dashboard), {
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, max-age=30', ...corsHeaders },
   });
 }
 
