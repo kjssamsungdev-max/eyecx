@@ -1856,14 +1856,24 @@
         const el = document.getElementById('admin-sources');
         el.innerHTML = '<p style="color:var(--muted)">Loading sources...</p>';
 
-        const [hResp, cResp] = await Promise.all([
+        const [hResp, cResp, tResp] = await Promise.all([
             apiFetch('/api/admin/sources/health'),
             apiFetch('/api/admin/sources/candidates'),
+            apiFetch('/api/tlds'),
         ]);
         const hData = await hResp.json();
         const cData = await cResp.json();
+        const tData = await tResp.json();
         const sources = hData.sources || [];
         const candidates = cData.candidates || [];
+        const allTlds = tData.tlds || [];
+
+        // TLD class counts
+        const tldCounts = { open: 0, brand: 0 };
+        for (const t of allTlds) { tldCounts[t.class] = (tldCounts[t.class] || 0) + 1; }
+
+        // TLD class filter state
+        const tldClassFilter = el.dataset.tldClassFilter || 'all';
 
         const statusColor = { healthy: 'var(--success)', stale: 'var(--gold)', dead: '#f87171', failing: '#f87171' };
         const counts = { healthy: 0, stale: 0, dead: 0, disabled: 0 };
@@ -1873,10 +1883,15 @@
         }
 
         el.innerHTML = `
-            <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;">
+            <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">
                 <button class="btn btn-primary" style="padding:8px 16px;" id="check-health-btn">Check health</button>
                 <button class="vote-btn" id="discover-btn">Discover sources</button>
                 <button class="vote-btn" id="check-alerts-btn">Check alerts</button>
+                <select id="tld-class-filter" style="padding:6px 10px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">
+                    <option value="all"${tldClassFilter==='all'?' selected':''}>All TLDs</option>
+                    <option value="open"${tldClassFilter==='open'?' selected':''}>Open TLDs</option>
+                    <option value="brand"${tldClassFilter==='brand'?' selected':''}>Brand TLDs</option>
+                </select>
                 <span id="sources-msg" style="color:var(--muted);font-size:0.9rem;"></span>
             </div>
             <div class="stats-grid" style="margin-bottom:24px;">
@@ -1884,6 +1899,15 @@
                 <div class="stat-card"><div class="val" style="color:var(--gold)">${counts.stale}</div><div class="lbl">Stale</div></div>
                 <div class="stat-card"><div class="val" style="color:#f87171">${counts.dead}</div><div class="lbl">Dead</div></div>
                 <div class="stat-card"><div class="val">${counts.disabled}</div><div class="lbl">Disabled</div></div>
+                <div class="stat-card"><div class="val" style="color:var(--accent)">${tldCounts.open}</div><div class="lbl">Open TLDs</div></div>
+                <div class="stat-card"><div class="val">${tldCounts.brand}</div><div class="lbl">Brand TLDs</div></div>
+            </div>
+            <h3 style="margin-bottom:12px;">TLDs (${tldClassFilter === 'all' ? 'All' : tldClassFilter})</h3>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px;">
+                ${allTlds.filter(t => tldClassFilter === 'all' || t.class === tldClassFilter).map(t =>
+                    '<span style="padding:4px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.85rem;">' +
+                    '.' + t.name + ' <span style="color:var(--muted);font-size:0.75rem;">' + t.class + '</span></span>'
+                ).join('')}
             </div>
             <h3 style="margin-bottom:12px;">Sources</h3>
             <table class="data-table" style="font-size:0.85rem;">
@@ -1906,6 +1930,10 @@
                 </div>
             </div>`).join('')}` : ''}`;
 
+        document.getElementById('tld-class-filter').onchange = (e) => {
+            el.dataset.tldClassFilter = e.target.value;
+            loadAdminSources();
+        };
         document.getElementById('check-health-btn').onclick = () => adminAction('check-health-btn', 'sources-msg', 'Checking health', async () => {
             const r = await apiFetch('/api/admin/sources/check-health', { method: 'POST' });
             const d = await r.json();
@@ -2827,13 +2855,17 @@
     // Load active TLDs for filter dropdowns + stats
     fetch(`${API}/api/tlds`).then(r => r.json()).then(d => {
         const tlds = d.tlds || [];
-        // Populate all TLD dropdowns
+        // Populate marketplace TLD dropdowns — open TLDs only (brand TLDs hidden until they have drops)
         for (const selId of ['mp-tld', 'f-tld']) {
             const sel = document.getElementById(selId);
             if (!sel) continue;
-            for (const tld of tlds) {
+            for (const t of tlds) {
+                // Support both old string format and new object format
+                const name = typeof t === 'string' ? t : t.tld;
+                const cls = typeof t === 'string' ? 'open' : t.class;
+                if (cls === 'brand') continue; // brand TLDs hidden from marketplace filters
                 const opt = document.createElement('option');
-                opt.value = tld; opt.textContent = tld;
+                opt.value = name; opt.textContent = name;
                 sel.appendChild(opt);
             }
         }

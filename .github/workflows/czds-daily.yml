@@ -109,7 +109,44 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tld: [xyz, info, biz, net, org, com]
+        tld: [xyz, info, biz, net, org, com, edeka, statefarm, pru, prudential, nfl, mattel, chase, jpmorgan, intuit, mint, farmers, dupont]
+        include:
+          - tld: xyz
+            tld_class: open
+          - tld: info
+            tld_class: open
+          - tld: biz
+            tld_class: open
+          - tld: net
+            tld_class: open
+          - tld: org
+            tld_class: open
+          - tld: com
+            tld_class: open
+          - tld: edeka
+            tld_class: brand
+          - tld: statefarm
+            tld_class: brand
+          - tld: pru
+            tld_class: brand
+          - tld: prudential
+            tld_class: brand
+          - tld: nfl
+            tld_class: brand
+          - tld: mattel
+            tld_class: brand
+          - tld: chase
+            tld_class: brand
+          - tld: jpmorgan
+            tld_class: brand
+          - tld: intuit
+            tld_class: brand
+          - tld: mint
+            tld_class: brand
+          - tld: farmers
+            tld_class: brand
+          - tld: dupont
+            tld_class: brand
 
     steps:
       - name: Check if TLD is approved
@@ -240,8 +277,13 @@ jobs:
           SIZE=$(stat -c%s "$RAW_FILE" 2>/dev/null || echo "0")
           echo "Downloaded: $RAW_FILE ($(( SIZE / 1024 / 1024 )) MB)"
 
-          if [ "$SIZE" -lt 10000 ]; then
-            echo "::error::File too small ($SIZE bytes), likely not a real zone file"
+          # Brand TLDs have tiny zone files (single-registrant); lower threshold
+          MIN_SIZE=10000
+          if [ "${{ matrix.tld_class }}" = "brand" ]; then
+            MIN_SIZE=100
+          fi
+          if [ "$SIZE" -lt "$MIN_SIZE" ]; then
+            echo "::error::File too small ($SIZE bytes) for ${{ matrix.tld_class }} TLD"
             head -c 500 "$RAW_FILE"
             exit 1
           fi
@@ -290,8 +332,13 @@ jobs:
           DOMAIN_COUNT=$(wc -l < "$SNAP_FILE")
           echo "Parsed: $DOMAIN_COUNT domains"
 
-          if [ "$DOMAIN_COUNT" -lt 100 ]; then
-            echo "::error::Only $DOMAIN_COUNT domains parsed — zone file may be invalid"
+          # Brand TLDs may have very few domains (single-registrant)
+          MIN_DOMAINS=100
+          if [ "${{ matrix.tld_class }}" = "brand" ]; then
+            MIN_DOMAINS=1
+          fi
+          if [ "$DOMAIN_COUNT" -lt "$MIN_DOMAINS" ]; then
+            echo "::error::Only $DOMAIN_COUNT domains parsed — zone file may be invalid (min $MIN_DOMAINS for ${{ matrix.tld_class }})"
             echo "First 20 lines of snapshot:"
             head -20 "$SNAP_FILE"
             echo "First 5 lines of raw zone file:"

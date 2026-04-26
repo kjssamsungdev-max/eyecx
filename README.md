@@ -72,18 +72,28 @@ Every 6h    RSS curation + sales extraction (Worker cron)
 
 ---
 
+## TLD Classes
+
+TLDs are classified in `config/active_tlds.json`:
+
+- **Open TLDs** (xyz, info, org): Public registration, high drop volume. Always visible in marketplace and sitemap.
+- **Brand TLDs** (edeka, statefarm, chase, etc.): Single-registrant corporate TLDs approved via CZDS. Low/zero drop volume. Invisible in marketplace and sitemap until they actually produce available domains. `/tld/:tld` returns 410 Gone for brand TLDs with no inventory.
+
+The pipeline processes all approved TLDs regardless of class. Brand TLDs have relaxed zone file size thresholds (100 bytes min, 1 domain min) since their zone files are tiny.
+
+`GET /api/tlds?class=open|brand|all` filters by class (default: all).
+
 ## Adding a New TLD
 
 When ICANN approves a new CZDS zone:
 
-1. The `czds-daily.yml` discover job automatically detects it via `/czds/downloads/links`
-2. Zone file downloads, parses, and uploads snapshot to R2
-3. `GET /api/tlds` returns it — frontend filters update automatically
-4. `daily-scan.yml` discovers it from R2 and includes it in diffs
-5. Scoring works immediately (unknown TLDs get +1 base, brandability applies)
-6. After 20+ sales accumulate, self-tuning adjusts weights for the TLD
-
-No code changes needed. The only manual step is ICANN approval.
+1. Add the TLD to `config/active_tlds.json` with appropriate class
+2. Add it to the `czds-daily.yml` matrix (with `tld_class: open|brand`)
+3. Mirror the entry in `ACTIVE_TLDS` in `worker/src/index.ts`
+4. Deploy the Worker — `GET /api/tlds` returns it, frontend filters update automatically
+5. `daily-scan.yml` discovers it from the API and includes it in diffs
+6. Scoring works immediately (unknown TLDs get +1 base, brandability applies)
+7. After 20+ sales accumulate, self-tuning adjusts weights for the TLD
 
 ---
 

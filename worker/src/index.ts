@@ -351,12 +351,20 @@ export default {
       return new Response(xml, { headers: { 'Content-Type': 'application/xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
     }
 
-    // GET /sitemap-tlds.xml - TLD explainer pages sitemap
+    // GET /sitemap-tlds.xml - TLD explainer pages sitemap (only visible TLDs)
     if (path === '/sitemap-tlds.xml' && request.method === 'GET') {
       const base = 'https://eyecx.com';
       const now = new Date().toISOString().split('T')[0];
-      const tlds = Object.keys(TLD_FACTS);
-      const entries = tlds.map(t => `  <url><loc>${base}/tld/${t}</loc><lastmod>${now}</lastmod><changefreq>daily</changefreq><priority>0.8</priority></url>`);
+      // Include open TLDs always; brand TLDs only if they have available domains
+      const brandTlds = ACTIVE_TLDS.filter(t => t.class === 'brand').map(t => '.' + t.name);
+      let brandWithData: Set<string> = new Set();
+      if (brandTlds.length > 0) {
+        const placeholders = brandTlds.map(() => '?').join(',');
+        const brandAvail = await env.DB.prepare(`SELECT DISTINCT tld FROM domains WHERE tld IN (${placeholders}) AND availability_status = 'available'`).bind(...brandTlds).all<{tld:string}>();
+        brandWithData = new Set((brandAvail.results || []).map(r => r.tld.replace('.', '')));
+      }
+      const visibleTlds = ACTIVE_TLDS.filter(t => t.approved && (t.class === 'open' || brandWithData.has(t.name)));
+      const entries = visibleTlds.map(t => `  <url><loc>${base}/tld/${t.name}</loc><lastmod>${now}</lastmod><changefreq>daily</changefreq><priority>0.8</priority></url>`);
       const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.join('\n')}\n</urlset>`;
       return new Response(xml, { headers: { 'Content-Type': 'application/xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' } });
     }
@@ -1262,8 +1270,13 @@ export default {
         const minScore = parseInt(url.searchParams.get('min_score') || '0');
         const search = url.searchParams.get('search');
 
+        // Exclude brand TLDs unless they specifically have available domains
+        const openTlds = ACTIVE_TLDS.filter(t => t.class === 'open').map(t => '.' + t.name);
+        const brandTlds = ACTIVE_TLDS.filter(t => t.class === 'brand').map(t => '.' + t.name);
         let q = "SELECT domain, tld, potential_score, tier, estimated_flip_value, wayback_snapshots, estimated_age_years, availability_status, brand_score, predicted_price_usd, price_confidence, first_seen FROM domains WHERE potential_score >= ? AND availability_status = 'available'";
         const p: any[] = [minScore];
+        // Filter: show open TLDs always; brand TLDs are included naturally if they have available rows
+        // but if a specific brand TLD is requested, allow it
         if (tier) { q += ' AND tier = ?'; p.push(tier); }
         if (tld) { q += ' AND tld = ?'; p.push(tld); }
         if (search && search.length >= 2) { q += ' AND domain LIKE ?'; p.push(`%${search}%`); }
@@ -1295,8 +1308,9 @@ export default {
         resp = apiResponse(result.results || [], { limit, offset, total: total?.c || 0 });
 
       } else if (path === '/v1/tlds' && request.method === 'GET') {
-        const listed = await env.ZONES.list({ prefix: 'snapshots/', delimiter: '/' });
-        const tlds = (listed.delimitedPrefixes || []).map((p: string) => '.' + p.replace('snapshots/', '').replace('/', '')).filter((t: string) => t.length > 1).sort();
+        const classFilter = url.searchParams.get('class') || 'all';
+        const filtered = ACTIVE_TLDS.filter(t => t.approved && (classFilter === 'all' || t.class === classFilter));
+        const tlds = filtered.map(t => ({ name: t.name, tld: '.' + t.name, class: t.class })).sort((a, b) => a.name.localeCompare(b.name));
         resp = apiResponse(tlds);
 
       } else if (path === '/v1/stats' && request.method === 'GET') {
@@ -1378,13 +1392,11 @@ export default {
       return json({ ok: true, message: 'Request submitted. You will receive your key via email.' });
     }
 
-    // GET /api/tlds - Active TLDs (derived from R2 snapshots)
+    // GET /api/tlds - Active TLDs from config, with optional ?class=open|brand|all
     if (path === '/api/tlds' && request.method === 'GET') {
-      const listed = await env.ZONES.list({ prefix: 'snapshots/', delimiter: '/' });
-      const tlds = (listed.delimitedPrefixes || [])
-        .map((p: string) => '.' + p.replace('snapshots/', '').replace('/', ''))
-        .filter((t: string) => t.length > 1)
-        .sort();
+      const classFilter = url.searchParams.get('class') || 'all';
+      const filtered = ACTIVE_TLDS.filter(t => t.approved && (classFilter === 'all' || t.class === classFilter));
+      const tlds = filtered.map(t => ({ name: t.name, tld: '.' + t.name, class: t.class })).sort((a, b) => a.name.localeCompare(b.name));
       return json({ tlds });
     }
 
@@ -3346,6 +3358,27 @@ ${d.availability_status === 'available' ? `<a href="https://dash.cloudflare.com/
   });
 }
 
+// ============ ACTIVE TLDs (mirrors config/active_tlds.json) ============
+interface ActiveTld { name: string; class: 'open' | 'brand'; approved: boolean; }
+const ACTIVE_TLDS: ActiveTld[] = [
+  { name: 'xyz', class: 'open', approved: true },
+  { name: 'info', class: 'open', approved: true },
+  { name: 'org', class: 'open', approved: true },
+  { name: 'edeka', class: 'brand', approved: true },
+  { name: 'statefarm', class: 'brand', approved: true },
+  { name: 'pru', class: 'brand', approved: true },
+  { name: 'prudential', class: 'brand', approved: true },
+  { name: 'nfl', class: 'brand', approved: true },
+  { name: 'mattel', class: 'brand', approved: true },
+  { name: 'chase', class: 'brand', approved: true },
+  { name: 'jpmorgan', class: 'brand', approved: true },
+  { name: 'intuit', class: 'brand', approved: true },
+  { name: 'mint', class: 'brand', approved: true },
+  { name: 'farmers', class: 'brand', approved: true },
+  { name: 'dupont', class: 'brand', approved: true },
+];
+const ACTIVE_TLD_MAP: Record<string, ActiveTld> = Object.fromEntries(ACTIVE_TLDS.map(t => [t.name, t]));
+
 // ============ TLD FACTS (embedded) ============
 const TLD_FACTS: Record<string, { launched: number; operator: string; primary_use: string; registration_cost: string }> = {
   xyz: { launched: 2014, operator: 'XYZ.COM LLC', primary_use: 'General purpose gTLD positioned as an alternative to .com. Popular with tech startups and younger demographics.', registration_cost: '$1-12/year' },
@@ -3357,9 +3390,20 @@ const TLD_FACTS: Record<string, { launched: number; operator: string; primary_us
 
 async function renderTldPage(tld: string, env: Env): Promise<Response> {
   const dotTld = '.' + tld;
+  const tldConfig = ACTIVE_TLD_MAP[tld];
+
+  // Brand TLDs with no available domains return 410 Gone
+  if (tldConfig && tldConfig.class === 'brand') {
+    const brandAvail = await env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE tld = ? AND availability_status = 'available'").bind(dotTld).first<{c:number}>();
+    if (!brandAvail || brandAvail.c === 0) {
+      return new Response(`No .${tld} drops currently available. This brand TLD is monitored but has no public inventory.`, {
+        status: 410,
+        headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=86400' },
+      });
+    }
+  }
 
   // Check TLD exists in R2 snapshots
-  const snap = await env.ZONES.head(`snapshots/${tld}/`);
   const listed = await env.ZONES.list({ prefix: `snapshots/${tld}/`, limit: 1 });
   if (!listed.objects?.length && !listed.delimitedPrefixes?.length) {
     // Check if any domains exist for this TLD
@@ -3506,7 +3550,7 @@ ${sections}
 <p style="margin-top:32px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:0.85rem;">Data updated daily from ICANN CZDS. Market sales tracked from DNJournal, NamePros, DomainInvesting.</p>
 <footer style="margin-top:24px;color:var(--muted);font-size:0.85rem;">
 <a href="/">EyeCX</a> · <a href="/marketplace">Marketplace</a> · <a href="/blog">Blog</a>
-${Object.keys(TLD_FACTS).filter(t => t !== tld).map(t => `· <a href="/tld/${t}">.${t}</a>`).join(' ')}
+${ACTIVE_TLDS.filter(t => t.class === 'open' && t.name !== tld).map(t => `· <a href="/tld/${t.name}">.${t.name}</a>`).join(' ')}
 </footer>
 </div>
 </body>

@@ -1,0 +1,19 @@
+{
+  "tlds": [
+    {"name": "xyz", "class": "open", "approved": true},
+    {"name": "info", "class": "open", "approved": true},
+    {"name": "org", "class": "open", "approved": true},
+    {"name": "edeka", "class": "brand", "approved": true},
+    {"name": "statefarm", "class": "brand", "approved": true},
+    {"name": "pru", "class": "brand", "approved": true},
+    {"name": "prudential", "class": "brand", "approved": true},
+    {"name": "nfl", "class": "brand", "approved": true},
+    {"name": "mattel", "class": "brand", "approved": true},
+    {"name": "chase", "class": "brand", "approved": true},
+    {"name": "jpmorgan", "class": "brand", "approved": true},
+    {"name": "intuit", "class": "brand", "approved": true},
+    {"name": "mint", "class": "brand", "approved": true},
+    {"name": "farmers", "class": "brand", "approved": true},
+    {"name": "dupont", "class": "brand", "approved": true}
+  ]
+}
