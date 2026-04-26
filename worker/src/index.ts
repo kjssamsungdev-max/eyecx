@@ -378,6 +378,18 @@ export default {
       return json({ status: 'ok', timestamp: new Date().toISOString() });
     }
 
+    // POST /api/admin/sales/backfill - Run sales extraction on all pending articles
+    if (path === '/api/admin/sales/backfill' && request.method === 'POST') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const before = await env.DB.prepare('SELECT COUNT(*) as c FROM market_sales').first<{c:number}>();
+      const pending = await env.DB.prepare("SELECT COUNT(*) as c FROM curated_content WHERE source_name IN ('DNJournal','NamePros','DomainInvesting','DomainNameWire','Domain Name Wire','Sedo') AND extracted_at IS NULL").first<{c:number}>();
+      const result = await runSalesExtraction(env);
+      const after = await env.DB.prepare('SELECT COUNT(*) as c FROM market_sales').first<{c:number}>();
+      logEvent(env, 'sales_extracted', null, `Backfill batch: ${result.extracted} sales from ${result.processed} articles`);
+      return json({ before: before?.c || 0, after: after?.c || 0, net_new: (after?.c || 0) - (before?.c || 0), ...result, pending_remaining: (pending?.c || 0) - result.processed });
+    }
+
     // POST /api/waitlist - Public waitlist signup
     if (path === '/api/waitlist' && request.method === 'POST') {
       try {
@@ -3849,42 +3861,133 @@ async function logRejection(env: Env, tableName: string, key: string, reason: st
 // ============ SALES EXTRACTION ============
 
 const SALE_SOURCES = new Set(['DNJournal', 'NamePros', 'DomainInvesting', 'DomainNameWire', 'Domain Name Wire', 'Sedo']);
-const SALE_PATTERN = /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.(?:com|net|org|io|ai|co|xyz|info|app|dev|me))\s*(?:[-–—]|sold\s+for|was\s+sold|acquired\s+for|for)\s*\$?([\d,]+(?:\.\d{2})?)/gi;
+
+// TLD group shared across patterns
+const TLD_GROUP = '(?:com|net|org|io|ai|co|xyz|info|app|dev|me|cc|tv|us|uk|de|gg|ly|to|sc|biz)';
+const DOMAIN_RE = `([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.${TLD_GROUP})`;
+
+// Pattern 1: domain ... $price  (domain first)
+// Connectors: "at" "for" "sold for" "was sold for" "fetched" "went for" "brought" "–" "—"
+const SALE_FWD = new RegExp(
+  DOMAIN_RE + `\\s{0,5}(?:[-\\u2013\\u2014]|sold\\s+for|was\\s+sold\\s+for|acquired\\s+for|fetched|went\\s+for|brought|at|for)\\s{0,3}(?:a\\s+whopping\\s+)?\\$([\\d,]+(?:\\.\\d{1,2})?)\\s*([kmKM])?`,
+  'gi'
+);
+
+// Pattern 2: $price ... domain  (price first)
+// e.g. "$200,000 for SuperApp.com" or "$145,000 — On.org"
+const SALE_REV = new RegExp(
+  `\\$([\\d,]+(?:\\.\\d{1,2})?)\\s*([kmKM])?\\s{0,5}(?:[-\\u2013\\u2014]|for|sale\\s+of|paid\\s+for)?\\s{0,3}` + DOMAIN_RE,
+  'gi'
+);
+
+function parsePrice(raw: string, suffix?: string): number {
+  let price = parseFloat(raw.replace(/,/g, ''));
+  if (suffix) {
+    const s = suffix.toLowerCase();
+    if (s === 'k') price *= 1000;
+    else if (s === 'm') price *= 1_000_000;
+  }
+  return price;
+}
 
 function extractSalesFromText(text: string): Array<{ domain: string; price: number }> {
   if (!text || text.length < 10) return [];
 
+  // Strip HTML tags for cleaner matching
+  const clean = text.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/&#\d+;/g, ' ').replace(/\s+/g, ' ');
+
   const sales: Array<{ domain: string; price: number }> = [];
   const seen = new Set<string>();
-  let match: RegExpExecArray | null;
-  const re = new RegExp(SALE_PATTERN.source, SALE_PATTERN.flags);
 
-  for (let i = 0; i < 200; i++) {
-    match = re.exec(text);
+  // Forward pattern: domain ... $price
+  let match: RegExpExecArray | null;
+  const fwd = new RegExp(SALE_FWD.source, SALE_FWD.flags);
+  for (let i = 0; i < 500; i++) {
+    match = fwd.exec(clean);
     if (!match) break;
     const domain = match[1].toLowerCase();
-    const price = parseFloat(match[2].replace(/,/g, ''));
+    const price = parsePrice(match[2], match[3]);
     if (price >= 50 && price <= 100_000_000 && !seen.has(domain)) {
       seen.add(domain);
       sales.push({ domain, price });
     }
   }
+
+  // Reverse pattern: $price ... domain
+  const rev = new RegExp(SALE_REV.source, SALE_REV.flags);
+  for (let i = 0; i < 500; i++) {
+    match = rev.exec(clean);
+    if (!match) break;
+    const price = parsePrice(match[1], match[2]);
+    const domain = match[3].toLowerCase();
+    if (price >= 50 && price <= 100_000_000 && !seen.has(domain)) {
+      seen.add(domain);
+      sales.push({ domain, price });
+    }
+  }
+
   return sales;
 }
 
-async function runSalesExtraction(env: Env): Promise<{ processed: number; extracted: number; errors: number }> {
+// Fetch full article body from URL for richer extraction
+async function fetchArticleBody(url: string): Promise<string | null> {
+  try {
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'EyeCX/1.0 (research; contact@eyecx.com)', 'Accept': 'text/html' },
+      redirect: 'follow',
+    });
+    if (!resp.ok) return null;
+    const html = await resp.text();
+
+    // Try structured content selectors first
+    const articleMatch = html.match(/<article[^>]*>([\s\S]*?)<\/article>/i)
+      || html.match(/<main[^>]*>([\s\S]*?)<\/main>/i)
+      || html.match(/<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+      || html.match(/<div[^>]*class="[^"]*post-content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+    if (articleMatch) return articleMatch[1];
+
+    // DNJournal-style: huge pages with sales in <table> blocks scattered throughout
+    // Extract all table contents + surrounding paragraphs (where domain+price patterns live)
+    const tables = html.match(/<table[\s\S]*?<\/table>/gi) || [];
+    const paragraphs = html.match(/<p[^>]*>[\s\S]*?<\/p>/gi) || [];
+    const combined = [...tables, ...paragraphs].join(' ');
+    if (combined.length > 1000) return combined.slice(0, 500000);
+
+    // Fallback: full page (capped)
+    return html.slice(0, 200000);
+  } catch {
+    return null;
+  }
+}
+
+// Sources where we should fetch the full article (list-style sale reports)
+const FETCH_FULL_SOURCES = new Set(['DNJournal', 'DomainNameWire', 'Domain Name Wire', 'DomainInvesting']);
+
+async function runSalesExtraction(env: Env): Promise<{ processed: number; extracted: number; errors: number; fetched: number }> {
   const sources = Array.from(SALE_SOURCES).map(s => `'${s}'`).join(',');
   const rows = await env.DB.prepare(
-    `SELECT id, title, excerpt, url, source_name FROM curated_content
+    `SELECT id, title, excerpt, url, source_name, categories FROM curated_content
      WHERE source_name IN (${sources}) AND extracted_at IS NULL
-     ORDER BY published_at DESC LIMIT 100`
-  ).all<{ id: number; title: string; excerpt: string; url: string; source_name: string }>();
+     ORDER BY published_at DESC LIMIT 200`
+  ).all<{ id: number; title: string; excerpt: string; url: string; source_name: string; categories: string }>();
 
-  let processed = 0, extracted = 0, errors = 0;
+  let processed = 0, extracted = 0, errors = 0, fetched = 0;
+  const MAX_FETCHES = 15; // Cap article body fetches per batch to stay within Worker CPU limits
 
   for (const row of (rows.results || [])) {
     try {
-      const text = (row.title || '') + ' ' + (row.excerpt || '');
+      let text = (row.title || '') + ' ' + (row.excerpt || '');
+
+      // For list-style sale report sources, fetch the full article body (capped)
+      const isSaleReport = (row.categories || '').includes('sale-report');
+      if (fetched < MAX_FETCHES && (FETCH_FULL_SOURCES.has(row.source_name) || isSaleReport)) {
+        const body = await fetchArticleBody(row.url);
+        if (body) {
+          text = (row.title || '') + ' ' + body;
+          fetched++;
+        }
+      }
+
       const sales = extractSalesFromText(text);
 
       for (const sale of sales) {
@@ -3910,7 +4013,7 @@ async function runSalesExtraction(env: Env): Promise<{ processed: number; extrac
     }
   }
 
-  return { processed, extracted, errors };
+  return { processed, extracted, errors, fetched };
 }
 
 // ============ CONTENT CLASSIFIER ============
