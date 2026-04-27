@@ -3917,11 +3917,46 @@ function parsePrice(raw: string, suffix?: string): number {
   return price;
 }
 
-function extractSalesFromText(text: string): Array<{ domain: string; price: number }> {
+// DomainNameWire-specific extractor
+// Format: "Domain.TLD $Price – Description" or "Domain.TLD €Price – Description"
+// Each sale on its own line/paragraph in .entry-content
+function extractDNWSales(text: string): Array<{ domain: string; price: number }> {
+  if (!text || text.length < 10) return [];
+  const clean = text.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, ' ').replace(/\s+/g, ' ');
+  const sales: Array<{ domain: string; price: number }> = [];
+  const seen = new Set<string>();
+
+  // Pattern: domain.tld $N,NNN or €N,NNN followed by dash+description
+  const DNW_RE = new RegExp(
+    `([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.${TLD_GROUP})\\s+[$€£](\\d[\\d,]*)\\s*[–—\\-]`,
+    'gi'
+  );
+  let match: RegExpExecArray | null;
+  for (let i = 0; i < 500; i++) {
+    match = DNW_RE.exec(clean);
+    if (!match) break;
+    const domain = match[1].toLowerCase();
+    const price = parseInt(match[2].replace(/,/g, ''));
+    if (price >= 50 && price <= 100_000_000 && !seen.has(domain)) {
+      seen.add(domain);
+      sales.push({ domain, price });
+    }
+  }
+  return sales;
+}
+
+function extractSalesFromText(text: string, sourceName?: string): Array<{ domain: string; price: number }> {
   if (!text || text.length < 10) return [];
 
+  // Per-source extractors — try specialized first, then generic
+  if (sourceName === 'DomainNameWire' || sourceName === 'Domain Name Wire') {
+    const dnwSales = extractDNWSales(text);
+    if (dnwSales.length > 0) return dnwSales;
+    // Fall through to generic if DNW extractor finds nothing
+  }
+
   // Strip HTML tags for cleaner matching
-  const clean = text.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/&#\d+;/g, ' ').replace(/\s+/g, ' ');
+  const clean = text.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, ' ').replace(/\s+/g, ' ');
 
   const sales: Array<{ domain: string; price: number }> = [];
   const seen = new Set<string>();
@@ -4015,7 +4050,7 @@ async function runSalesExtraction(env: Env): Promise<{ processed: number; extrac
         }
       }
 
-      const sales = extractSalesFromText(text);
+      const sales = extractSalesFromText(text, row.source_name);
 
       for (const sale of sales) {
         const tld = '.' + sale.domain.split('.').pop();
