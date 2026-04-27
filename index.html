@@ -2779,9 +2779,11 @@
                 const hist = (d.estimated_age_years || d.wayback_snapshots)
                     ? `${d.estimated_age_years ? d.estimated_age_years + 'y' : ''} ${d.wayback_snapshots ? d.wayback_snapshots + ' snaps' : ''}`.trim()
                     : '<span style="color:var(--muted);font-size:0.8rem;">New drop</span>';
-                const action = user
-                    ? `<button class="vote-btn" id="mp-check-${d.domain.replace(/\./g,'-')}" onclick="mpCheckAvail('${d.domain}')">Check availability</button>`
-                    : `<a href="/login" style="color:var(--muted);font-size:0.85rem;">Sign in to check</a>`;
+                const regBtn = `<button class="btn btn-primary" style="padding:4px 10px;font-size:0.8rem;margin-right:6px;" onclick="affiliateClick('${d.domain}','cloudflare')">Register</button>`;
+                const checkBtn = user
+                    ? `<button class="vote-btn" id="mp-check-${d.domain.replace(/\./g,'-')}" onclick="mpCheckAvail('${d.domain}')">Check</button>`
+                    : '';
+                const action = regBtn + checkBtn;
                 const confColor = { high: 'var(--success)', medium: 'var(--gold)', low: 'var(--muted)' };
                 const priceCell = d.predicted_price_usd
                     ? `<span title="Range: $${d.price_low_usd?.toLocaleString()}-$${d.price_high_usd?.toLocaleString()} (${d.price_comps_count} comps)"
@@ -2808,6 +2810,20 @@
             ${mpPage > 0 ? `<button class="vote-btn" onclick="mpPage--;renderMarketplace()">Previous</button>` : ''}
             <span style="color:var(--muted);font-size:0.9rem;">Page ${mpPage + 1}</span>
             ${count >= MP_LIMIT ? `<button class="vote-btn" onclick="mpPage++;renderMarketplace()">Next</button>` : ''}`;
+    }
+
+    async function affiliateClick(domain, registrar) {
+        try {
+            const resp = await apiFetch('/api/affiliate/click', {
+                method: 'POST',
+                body: JSON.stringify({ domain, registrar, referrer: window.location.pathname }),
+            });
+            const data = await resp.json();
+            if (data.redirect) window.open(data.redirect, '_blank', 'noopener');
+        } catch {
+            // Fallback: direct redirect without logging
+            window.open(`https://www.cloudflare.com/products/registrar/?domain=${encodeURIComponent(domain)}`, '_blank', 'noopener');
+        }
     }
 
     async function mpCheckAvail(domain) {

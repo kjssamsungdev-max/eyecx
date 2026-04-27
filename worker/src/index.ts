@@ -594,6 +594,33 @@ const worker = {
       return await adminStats(env);
     }
 
+    // GET /api/admin/affiliate-stats - Affiliate click analytics
+    if (path === '/api/admin/affiliate-stats' && request.method === 'GET') {
+      const [user, err] = await requireAdmin(request, env);
+      if (err) return err;
+      const [total, today, week, byRegistrar, byDomain, byDay, domainViews] = await Promise.all([
+        env.DB.prepare('SELECT COUNT(*) as c FROM affiliate_clicks').first<{c:number}>(),
+        env.DB.prepare("SELECT COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-1 day')").first<{c:number}>(),
+        env.DB.prepare("SELECT COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-7 days')").first<{c:number}>(),
+        env.DB.prepare('SELECT registrar, COUNT(*) as c FROM affiliate_clicks GROUP BY registrar ORDER BY c DESC').all(),
+        env.DB.prepare('SELECT domain, COUNT(*) as c FROM affiliate_clicks GROUP BY domain ORDER BY c DESC LIMIT 20').all(),
+        env.DB.prepare("SELECT date(clicked_at) as d, COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-30 days') GROUP BY d ORDER BY d ASC").all(),
+        env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'available'").first<{c:number}>(),
+      ]);
+      const totalClicks = total?.c || 0;
+      const availDomains = domainViews?.c || 0;
+      return json({
+        total: totalClicks,
+        today: today?.c || 0,
+        this_week: week?.c || 0,
+        available_domains: availDomains,
+        ctr_estimate: availDomains > 0 ? `${((totalClicks / Math.max(availDomains, 1)) * 100).toFixed(1)}%` : 'N/A',
+        by_registrar: byRegistrar.results || [],
+        top_domains: byDomain.results || [],
+        daily: byDay.results || [],
+      });
+    }
+
     // GET /api/admin/dashboard - Full admin home summary (single batched query)
     if (path === '/api/admin/dashboard' && request.method === 'GET') {
       const [user, err] = await requireAdmin(request, env);
@@ -1479,6 +1506,36 @@ const worker = {
           `<h3>New API key request</h3><p>Email: ${email}</p><p>Use: ${intended_use}</p>`);
       }
       return json({ ok: true, message: 'Request submitted. You will receive your key via email.' });
+    }
+
+    // POST /api/affiliate/click - Log affiliate click and redirect to registrar
+    if (path === '/api/affiliate/click' && request.method === 'POST') {
+      const { domain, registrar, referrer } = await request.json() as { domain: string; registrar?: string; referrer?: string };
+      if (!domain || !FQDN_RE.test(domain.toLowerCase())) return error('Valid domain required');
+      const tld = '.' + domain.split('.').pop();
+      const reg = registrar || 'cloudflare';
+
+      // Extract user_id from session cookie if present (optional, no auth required)
+      let userId: string | null = null;
+      const cookie = request.headers.get('Cookie') || '';
+      const cookieMatch = cookie.match(/eyecx_session=([^;]+)/);
+      if (cookieMatch) {
+        const sess = await env.DB.prepare("SELECT user_id FROM sessions WHERE token = ? AND expires_at > datetime('now')").bind(cookieMatch[1]).first<{user_id:string}>();
+        if (sess) userId = sess.user_id;
+      }
+
+      await env.DB.prepare(
+        'INSERT INTO affiliate_clicks (domain, tld, registrar, referrer_page, user_id) VALUES (?, ?, ?, ?, ?)'
+      ).bind(domain.toLowerCase(), tld, reg, referrer || null, userId).run();
+
+      // Build registrar redirect URL
+      const redirectUrls: Record<string, string> = {
+        cloudflare: `https://www.cloudflare.com/products/registrar/?domain=${encodeURIComponent(domain)}`,
+        namecheap: `https://www.namecheap.com/domains/registration/results/?domain=${encodeURIComponent(domain)}`,
+        porkbun: `https://porkbun.com/checkout/search?q=${encodeURIComponent(domain)}`,
+      };
+      const redirectUrl = redirectUrls[reg] || redirectUrls.cloudflare;
+      return json({ ok: true, redirect: redirectUrl });
     }
 
     // GET /api/tlds - Active TLDs from config, with optional ?class=open|brand|all
@@ -3600,6 +3657,12 @@ ${d.predicted_price_usd ? `<div class="stat"><div class="v" style="color:#34d399
 <div class="stat"><div class="v">${d.wayback_snapshots || 0}</div><div class="l">Wayback</div></div>
 <div class="stat"><div class="v">${tldSales?.c || 0}</div><div class="l">${d.tld} sales tracked</div></div>
 </div>
+
+${d.availability_status === 'available' ? `<div style="margin:24px 0;display:flex;gap:12px;flex-wrap:wrap;">
+<a href="https://www.cloudflare.com/products/registrar/?domain=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-primary" onclick="fetch('/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'cloudflare',referrer:location.pathname}),credentials:'include'})">Register at Cloudflare</a>
+<a href="https://www.namecheap.com/domains/registration/results/?domain=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-outline" onclick="fetch('/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'namecheap',referrer:location.pathname}),credentials:'include'})">Namecheap</a>
+<a href="https://porkbun.com/checkout/search?q=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-outline" onclick="fetch('/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'porkbun',referrer:location.pathname}),credentials:'include'})">Porkbun</a>
+</div>` : ''}
 
 <h2 style="font-size:1.2rem;margin:24px 0 8px;">Why this domain?</h2>
 <p style="color:var(--muted);line-height:1.8;">${whyText}</p>
