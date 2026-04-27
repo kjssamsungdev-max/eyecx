@@ -97,6 +97,27 @@ When ICANN approves a new CZDS zone:
 
 ---
 
+## Schema Migrations
+
+`schema.sql` is the canonical schema (generated from production D1). Migrations live in `migrations/`:
+
+```
+migrations/
+  0000_initial.sql   — full schema snapshot (2026-04-27)
+  0001_add_foo.sql   — future migrations go here
+```
+
+To add a column or table:
+1. Create a new migration file: `migrations/NNNN_description.sql`
+2. Write the `ALTER TABLE` / `CREATE TABLE` SQL
+3. Apply to production: `cd worker && npx wrangler d1 migrations apply eyecx --remote`
+4. Update `schema.sql` to match the new state
+5. Commit both files
+
+Never edit production D1 with ad-hoc `wrangler d1 execute` commands — always go through migrations.
+
+---
+
 ## Scoring
 
 Each domain receives a score (0-100) from four components:

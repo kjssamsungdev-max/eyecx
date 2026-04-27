@@ -7,6 +7,7 @@ compatibility_date = "2024-01-01"
 binding = "DB"
 database_name = "eyecx"
 database_id = "d33d4f46-5599-47f0-8b70-1b6ea0175496"
+migrations_dir = "../migrations"
 
 # R2 Storage binding
 [[r2_buckets]]
