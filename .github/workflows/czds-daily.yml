@@ -31,11 +31,13 @@ jobs:
       - name: Authenticate and get approved zones
         id: zones
         run: |
+          set -euo pipefail
           # Authenticate with CZDS
           echo "Authenticating with CZDS..."
           RESP=$(curl -s -X POST \
             "https://account-api.icann.org/api/authenticate" \
             -H "Content-Type: application/json" \
+            -H "User-Agent: EyeCX/1.0 (https://eyecx.com)" \
             -d "{\"username\": \"$CZDS_USERNAME\", \"password\": \"$CZDS_PASSWORD\"}")
 
           TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
@@ -50,6 +52,7 @@ jobs:
           # Fetch approved download links
           LINKS=$(curl -s \
             -H "Authorization: Bearer $TOKEN" \
+            -H "User-Agent: EyeCX/1.0 (https://eyecx.com)" \
             "https://czds-api.icann.org/czds/downloads/links")
 
           echo "Raw CZDS links response (first 1000 chars):"
@@ -152,6 +155,7 @@ jobs:
       - name: Check if TLD is approved
         id: check
         run: |
+          set -euo pipefail
           MATRIX_TLD="${{ matrix.tld }}"
           INPUT_TLD="${{ github.event.inputs.tld || 'all' }}"
           APPROVED='${{ needs.discover.outputs.approved_tlds }}'
@@ -192,6 +196,7 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         id: existing
         run: |
+          set -euo pipefail
           TLD="${{ matrix.tld }}"
           TODAY=$(date -u +%Y-%m-%d)
           YESTERDAY=$(date -u -d "yesterday" +%Y-%m-%d)
@@ -235,6 +240,7 @@ jobs:
           TOKEN=$(curl -s -X POST \
             "https://account-api.icann.org/api/authenticate" \
             -H "Content-Type: application/json" \
+            -H "User-Agent: EyeCX/1.0 (https://eyecx.com)" \
             -d "{\"username\": \"$CZDS_USERNAME\", \"password\": \"$CZDS_PASSWORD\"}" \
             | python3 -c "import sys,json; print(json.load(sys.stdin).get('accessToken',''))")
 
@@ -264,6 +270,7 @@ jobs:
 
           HTTP_CODE=$(curl -s -o "$RAW_FILE" -w "%{http_code}" \
             -H "Authorization: Bearer $TOKEN" \
+            -H "User-Agent: EyeCX/1.0 (https://eyecx.com)" \
             "$DOWNLOAD_URL")
 
           echo "CZDS HTTP response: $HTTP_CODE"
@@ -356,6 +363,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
+          set -euo pipefail
           TLD="${{ matrix.tld }}"
           TODAY="${{ steps.existing.outputs.today }}"
           SNAP_FILE="${{ steps.parse.outputs.snap_file }}"
@@ -376,6 +384,7 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         id: diff
         run: |
+          set -euo pipefail
           TLD="${{ matrix.tld }}"
           TODAY="${{ steps.existing.outputs.today }}"
           YESTERDAY="${{ steps.existing.outputs.yesterday }}"
@@ -384,6 +393,7 @@ jobs:
           RESP=$(curl -s -X POST \
             -H "Authorization: Bearer $EYECX_API_SECRET" \
             -H "Content-Type: application/json" \
+            -H "User-Agent: EyeCX/1.0 (https://eyecx.com)" \
             -d "{\"tld\": \"$TLD\", \"yesterday\": \"$YESTERDAY\", \"today\": \"$TODAY\"}" \
             "$EYECX_API_URL/api/zones/diff")
 
@@ -417,6 +427,7 @@ jobs:
     steps:
       - name: Check CZDS status
         run: |
+          set -euo pipefail
           echo "## Approved TLDs" >> $GITHUB_STEP_SUMMARY
           echo '${{ needs.discover.outputs.approved_tlds }}' | python3 -c "
           import sys, json
@@ -430,6 +441,7 @@ jobs:
 
           curl -s \
             -H "Authorization: Bearer ${{ secrets.EYECX_API_SECRET }}" \
+            -H "User-Agent: EyeCX/1.0 (https://eyecx.com)" \
             "https://eyecx-api.kjssamsungdev.workers.dev/api/czds/status" \
             | python3 -c "
           import sys, json

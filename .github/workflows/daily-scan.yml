@@ -53,6 +53,7 @@ jobs:
           # Use xyz as the reference TLD — all three TLDs share the same CZDS schedule
           echo "Querying R2 for available snapshots..."
           DATES=$(curl -s -H "Authorization: Bearer $EYECX_API_SECRET" \
+            -H "User-Agent: EyeCX/1.0 (https://eyecx.com)" \
             "$EYECX_API_URL/api/zones/xyz" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)

@@ -960,16 +960,13 @@ export default {
       const validTypes = ['rdap_reverify', 'rescore', 'sales_reextract', 'qa_audit', 'asset_audit'];
       if (!validTypes.includes(task_type)) return error(`Invalid task_type. Valid: ${validTypes.join(', ')}`);
 
-      // Check max 2 concurrent
-      const running = await env.DB.prepare(
-        "SELECT COUNT(*) as c FROM bulk_jobs WHERE status IN ('queued','running')"
-      ).first<{ c: number }>();
-      if ((running?.c || 0) >= 2) return error('Max 2 concurrent jobs. Wait for current jobs to finish.', 429);
-
-      // Insert job
+      // Atomic insert with concurrency guard (no read-then-write race)
       const result = await env.DB.prepare(
-        'INSERT INTO bulk_jobs (task_type, params, created_by) VALUES (?, ?, ?)'
+        `INSERT INTO bulk_jobs (task_type, params, created_by)
+         SELECT ?, ?, ?
+         WHERE (SELECT COUNT(*) FROM bulk_jobs WHERE status IN ('queued','running')) < 2`
       ).bind(task_type, params || null, user!.id).run();
+      if (!result.meta.changes) return error('Max 2 concurrent jobs. Wait for current jobs to finish.', 429);
       const jobId = result.meta.last_row_id;
 
       // Dispatch GitHub Actions
@@ -1313,21 +1310,16 @@ export default {
         const minScore = parseInt(url.searchParams.get('min_score') || '0');
         const search = url.searchParams.get('search');
 
-        // Exclude brand TLDs unless they specifically have available domains
-        const openTlds = ACTIVE_TLDS.filter(t => t.class === 'open').map(t => '.' + t.name);
-        const brandTlds = ACTIVE_TLDS.filter(t => t.class === 'brand').map(t => '.' + t.name);
-        let q = "SELECT domain, tld, potential_score, tier, estimated_flip_value, wayback_snapshots, estimated_age_years, availability_status, brand_score, predicted_price_usd, price_confidence, first_seen FROM domains WHERE potential_score >= ? AND availability_status = 'available'";
-        const p: any[] = [minScore];
-        // Filter: show open TLDs always; brand TLDs are included naturally if they have available rows
-        // but if a specific brand TLD is requested, allow it
-        if (tier) { q += ' AND tier = ?'; p.push(tier); }
-        if (tld) { q += ' AND tld = ?'; p.push(tld); }
-        if (search && search.length >= 2) { q += ' AND domain LIKE ?'; p.push(`%${search}%`); }
-        q += ' ORDER BY potential_score DESC LIMIT ? OFFSET ?';
-        p.push(limit, offset);
+        // Build shared WHERE clause for both data + count queries
+        let where = "potential_score >= ? AND availability_status = 'available'";
+        const wp: any[] = [minScore];
+        if (tier) { where += ' AND tier = ?'; wp.push(tier); }
+        if (tld) { where += ' AND tld = ?'; wp.push(tld); }
+        if (search && search.length >= 2) { where += ' AND domain LIKE ?'; wp.push(`%${search}%`); }
 
-        const result = await env.DB.prepare(q).bind(...p).all();
-        const total = await env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE potential_score >= ? AND availability_status = 'available'").bind(minScore).first<{c:number}>();
+        const q = `SELECT domain, tld, potential_score, tier, estimated_flip_value, wayback_snapshots, estimated_age_years, availability_status, brand_score, predicted_price_usd, price_confidence, first_seen FROM domains WHERE ${where} ORDER BY potential_score DESC LIMIT ? OFFSET ?`;
+        const result = await env.DB.prepare(q).bind(...wp, limit, offset).all();
+        const total = await env.DB.prepare(`SELECT COUNT(*) as c FROM domains WHERE ${where}`).bind(...wp).first<{c:number}>();
         resp = apiResponse(result.results || [], { limit, offset, total: total?.c || 0 });
 
       } else if (path.match(/^\/v1\/domains\/[^/]+$/) && request.method === 'GET') {
@@ -1501,7 +1493,10 @@ export default {
               r.first_seen || new Date().toISOString(), r.brand_score || 0
             ).run();
             inserted++;
-          } catch {}
+          } catch (e) {
+            await logRejection(env, 'domains', r.domain, `INSERT error: ${e}`);
+            rejected++;
+          }
         }
         if (inserted > 0) logEvent(env, 'domains_added', null, `${inserted} domains added (${rejected} rejected) from bulk upload`);
         return json({ ok: true, inserted, rejected, total: rows.length });
@@ -1668,13 +1663,20 @@ async function getDomains(url: URL, env: Env): Promise<Response> {
     params.push(`%${search}%`);
   }
 
+  // Count query uses same filters (before LIMIT/OFFSET are added)
+  const countQuery = query.replace(/\n\s*SELECT[\s\S]*?FROM/, '\n    SELECT COUNT(*) as c FROM');
+  const countParams = [...params];
+
   query += ' ORDER BY potential_score DESC, first_seen DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
-  const result = await env.DB.prepare(query).bind(...params).all();
+  const [result, total] = await Promise.all([
+    env.DB.prepare(query).bind(...params).all(),
+    env.DB.prepare(countQuery).bind(...countParams).first<{c:number}>(),
+  ]);
 
   return json({
-    count: result.results?.length || 0,
+    count: total?.c || 0,
     offset,
     limit,
     domains: result.results || [],

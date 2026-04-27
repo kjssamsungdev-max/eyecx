@@ -42,6 +42,7 @@ jobs:
 
       - name: Run bulk task
         run: |
+          set -euo pipefail
           TASK="${{ github.event.inputs.task_type }}"
           echo "Running bulk task: $TASK (job_id: $JOB_ID)"
 
