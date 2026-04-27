@@ -66,11 +66,30 @@ function authenticate(request: Request, env: Env): boolean {
 }
 
 // CORS headers
+const ALLOWED_ORIGINS = ['https://eyecx.com', 'https://www.eyecx.com'];
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cookie',
+  'Access-Control-Allow-Credentials': 'true',
 };
+
+function getAdminCors(request: Request): Record<string, string> {
+  const origin = request.headers.get('Origin') || '';
+  return {
+    'Access-Control-Allow-Origin': ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0],
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cookie',
+    'Access-Control-Allow-Credentials': 'true',
+  };
+}
+
+function adminJson(data: any, request: Request, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...getAdminCors(request) },
+  });
+}
 
 // Event logging helper (fire-and-forget, never throws)
 function logEvent(env: Env, type: string, target: string | null, message: string): void {
@@ -200,7 +219,7 @@ async function sendEmail(env: Env, to: string, subject: string, html: string): P
 const CZDS_TLDS = ['xyz', 'info', 'biz', 'net', 'org', 'com', 'app', 'dev', 'io', 'co', 'me', 'ai', 'tv', 'cc'];
 
 // Main handler
-export default {
+const worker = {
   // Cron triggers: CZDS at 1 AM UTC, RSS curation every 6 hours
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const hour = new Date().getUTCHours();
@@ -317,13 +336,13 @@ export default {
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Handle CORS preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
-
+    // Handle CORS preflight — admin routes get restricted origin
     const url = new URL(request.url);
     const path = url.pathname;
+    if (request.method === 'OPTIONS') {
+      const headers = path.startsWith('/api/admin') ? getAdminCors(request) : corsHeaders;
+      return new Response(null, { headers });
+    }
 
     // Public endpoints (no auth)
     // GET /sitemap.xml - Sitemap index
@@ -1618,7 +1637,7 @@ export default {
         if (!token) {
           return json({
             status: 'failed',
-            username: env.CZDS_USERNAME,
+            username_set: !!env.CZDS_USERNAME,
             message: 'Authentication failed (ICANN may block CF Worker IPs - use GitHub Actions instead)',
           }, 401);
         }
@@ -1647,6 +1666,23 @@ export default {
       console.error('Error:', e);
       return error('Internal server error', 500);
     }
+  },
+};
+
+// Wrap to tighten CORS on admin responses
+export default {
+  scheduled: worker.scheduled,
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const resp = await worker.fetch(request, env);
+    const path = new URL(request.url).pathname;
+    if (path.startsWith('/api/admin') || path.startsWith('/api/auth')) {
+      const adminCors = getAdminCors(request);
+      const newResp = new Response(resp.body, { status: resp.status, headers: new Headers(resp.headers) });
+      newResp.headers.set('Access-Control-Allow-Origin', adminCors['Access-Control-Allow-Origin']);
+      newResp.headers.set('Access-Control-Allow-Credentials', 'true');
+      return newResp;
+    }
+    return resp;
   },
 };
 
@@ -3748,9 +3784,16 @@ async function renderTldPage(tld: string, env: Env): Promise<Response> {
   const faqJsonLd = JSON.stringify({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faqs.map(f => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) });
   const breadcrumbLd = JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [{ '@type': 'ListItem', position: 1, name: 'Home', item: 'https://eyecx.com' }, { '@type': 'ListItem', position: 2, name: `.${tld} Domains`, item: canonical }] });
 
-  // Word count check
+  // Low-data TLD page — render a thin "coming soon" page instead of 503
   if (wordCount < 300) {
-    return new Response(`Insufficient data to generate .${tld} page (${wordCount} words). Check back as more data is collected.`, { status: 503 });
+    const thinHtml = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>.${tld} Domain Drops — Coming Soon | EyeCX</title><link rel="canonical" href="${canonical}">
+<style>:root{--bg:#0a0a0f;--text:#e4e4e7;--muted:#71717a;--accent:#22d3ee;}*{margin:0;padding:0;box-sizing:border-box;}body{font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:24px;text-align:center;min-height:100vh;display:flex;align-items:center;justify-content:center;}a{color:var(--accent);}</style></head>
+<body><div><h1 style="margin-bottom:12px;">.${tld} Domain Drops</h1><p style="color:var(--muted);margin-bottom:24px;">We're collecting data on .${tld} drops. Check back soon as inventory builds.</p><p><a href="/marketplace">Browse marketplace</a> · <a href="/">Home</a></p></div></body></html>`;
+    return new Response(thinHtml, {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=86400' },
+    });
   }
 
   sections = heroText + salesSection + priceSection + availSection + coverageSection + basicsSection + `<h2 style="margin:32px 0 12px;">Frequently Asked Questions</h2>${faqHtml}`;
