@@ -1,0 +1,53 @@
+name: Sprint 0 — RDAP Sweep
+
+on:
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  rdap-sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Run RDAP sweep
+        env:
+          EYECX_API_URL: https://eyecx-api.kjssamsungdev.workers.dev
+          EYECX_API_SECRET: ${{ secrets.EYECX_API_SECRET }}
+          SUMMARY_PATH: audit/sprint0_${{ github.run_id }}.md
+        run: |
+          set -euo pipefail
+          mkdir -p audit
+          python3 scripts/rdap_sweep.py
+
+      - name: Commit summary
+        run: |
+          set -euo pipefail
+          if ls audit/sprint0_*.md 1>/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add audit/
+            git commit -m "audit: Sprint 0 RDAP sweep results [skip ci]" || echo "No changes to commit"
+            git push || echo "Push failed (non-fatal)"
+          fi
+
+      - name: Post summary
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f audit/sprint0_*.md ]; then
+            cat audit/sprint0_*.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## RDAP Sweep" >> $GITHUB_STEP_SUMMARY
+            echo "No summary file generated. Check logs." >> $GITHUB_STEP_SUMMARY
+          fi
