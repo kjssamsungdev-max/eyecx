@@ -122,9 +122,19 @@ function generateToken(): string {
 const USER_COLUMNS = 'id, username, email, role, tier, email_verified, avatar_url, bio, karma, badges, created_at';
 
 async function authenticateSession(request: Request, env: Env): Promise<SessionUser | null> {
-  const auth = request.headers.get('Authorization');
-  if (!auth || !auth.startsWith('Bearer ')) return null;
-  const token = auth.slice(7);
+  // 1. Try HttpOnly cookie (browser sessions)
+  let token: string | null = null;
+  const cookie = request.headers.get('Cookie') || '';
+  const cookieMatch = cookie.match(/eyecx_session=([^;]+)/);
+  if (cookieMatch) token = cookieMatch[1];
+
+  // 2. Fall back to Authorization Bearer (service-to-service, legacy clients)
+  if (!token) {
+    const auth = request.headers.get('Authorization');
+    if (auth && auth.startsWith('Bearer ')) token = auth.slice(7);
+  }
+
+  if (!token) return null;
 
   const session = await env.DB.prepare(
     'SELECT user_id FROM sessions WHERE token = ? AND expires_at > datetime(\'now\')'
@@ -1967,15 +1977,28 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
     `SELECT ${USER_COLUMNS} FROM community_users WHERE id = ?`
   ).bind(user.id).first();
 
-  return json({ token, user: profile });
+  // Set HttpOnly cookie + return token in body (token field kept for backward compat — TODO remove after 2026-05-15)
+  const resp = json({ token, user: profile });
+  resp.headers.set('Set-Cookie', `eyecx_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`);
+  return resp;
 }
 
 async function handleLogout(request: Request, env: Env): Promise<Response> {
-  const auth = request.headers.get('Authorization');
-  if (!auth || !auth.startsWith('Bearer ')) return error('No session', 401);
-  const token = auth.slice(7);
-  await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
-  return json({ ok: true });
+  // Extract token from cookie or Bearer header
+  let token: string | null = null;
+  const cookie = request.headers.get('Cookie') || '';
+  const cookieMatch = cookie.match(/eyecx_session=([^;]+)/);
+  if (cookieMatch) token = cookieMatch[1];
+  if (!token) {
+    const auth = request.headers.get('Authorization');
+    if (auth && auth.startsWith('Bearer ')) token = auth.slice(7);
+  }
+  if (token) {
+    await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
+  }
+  const resp = json({ ok: true });
+  resp.headers.set('Set-Cookie', 'eyecx_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0');
+  return resp;
 }
 
 async function handleMe(request: Request, env: Env): Promise<Response> {

@@ -1120,31 +1120,36 @@
     const API = 'https://eyecx-api.kjssamsungdev.workers.dev';
 
     // ============ AUTH STATE ============
-    function getToken() { return localStorage.getItem('eyecx_token'); }
-    function setToken(t) { localStorage.setItem('eyecx_token', t); }
-    function clearToken() { localStorage.removeItem('eyecx_token'); localStorage.removeItem('eyecx_user'); }
-    function getUser() { try { return JSON.parse(localStorage.getItem('eyecx_user')); } catch { return null; } }
-    function setUser(u) { localStorage.setItem('eyecx_user', JSON.stringify(u)); }
+    // Session token is now in HttpOnly cookie (Set-Cookie from /api/auth/login).
+    // localStorage is legacy — clean up on load, never write new tokens.
+    let _cachedUser = null;
+    function getUser() { return _cachedUser; }
+    function setUser(u) { _cachedUser = u; }
+    function clearAuth() {
+        _cachedUser = null;
+        // Clean up legacy localStorage tokens
+        localStorage.removeItem('eyecx_token');
+        localStorage.removeItem('eyecx_user');
+    }
+    // One-time cleanup of legacy localStorage tokens
+    if (localStorage.getItem('eyecx_token')) localStorage.removeItem('eyecx_token');
+    if (localStorage.getItem('eyecx_user')) localStorage.removeItem('eyecx_user');
 
     async function apiFetch(path, opts = {}) {
-        const token = getToken();
         const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-        const resp = await fetch(`${API}${path}`, { ...opts, headers });
+        const resp = await fetch(`${API}${path}`, { ...opts, headers, credentials: 'include' });
         return resp;
     }
 
     async function checkAuth() {
-        const token = getToken();
-        if (!token) { updateNav(null); return null; }
         try {
             const resp = await apiFetch('/api/auth/me');
-            if (!resp.ok) { clearToken(); updateNav(null); return null; }
+            if (!resp.ok) { clearAuth(); updateNav(null); return null; }
             const data = await resp.json();
             setUser(data.user);
             updateNav(data.user);
             return data.user;
-        } catch { clearToken(); updateNav(null); return null; }
+        } catch { clearAuth(); updateNav(null); return null; }
     }
 
     function updateNav(user) {
@@ -1156,7 +1161,7 @@
             navUser.style.display = 'inline';
             navLogin.textContent = 'Logout';
             navLogin.href = '#';
-            navLogin.onclick = (e) => { e.preventDefault(); clearToken(); navigate('/'); };
+            navLogin.onclick = async (e) => { e.preventDefault(); await apiFetch('/api/auth/logout', { method: 'POST' }); clearAuth(); updateNav(null); navigate('/'); };
             if (user.role === 'admin') navAdmin.style.display = 'inline';
         } else {
             navUser.style.display = 'none';
@@ -1262,7 +1267,7 @@
             });
             const data = await resp.json();
             if (!resp.ok) { msg.textContent = data.error || 'Login failed'; msg.className = 'form-msg error'; return; }
-            setToken(data.token);
+            // Cookie set automatically by Set-Cookie header from login response
             setUser(data.user);
             navigate(data.user.role === 'admin' ? '/admin' : '/community');
         } catch { msg.textContent = 'Network error'; msg.className = 'form-msg error'; }
