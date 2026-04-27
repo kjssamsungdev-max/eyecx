@@ -2812,7 +2812,10 @@
             ${count >= MP_LIMIT ? `<button class="vote-btn" onclick="mpPage++;renderMarketplace()">Next</button>` : ''}`;
     }
 
+    let _affClickPending = false;
     async function affiliateClick(domain, registrar) {
+        if (_affClickPending) return;
+        _affClickPending = true;
         try {
             const resp = await apiFetch('/api/affiliate/click', {
                 method: 'POST',
@@ -2821,8 +2824,9 @@
             const data = await resp.json();
             if (data.redirect) window.open(data.redirect, '_blank', 'noopener');
         } catch {
-            // Fallback: direct redirect without logging
             window.open(`https://www.cloudflare.com/products/registrar/?domain=${encodeURIComponent(domain)}`, '_blank', 'noopener');
+        } finally {
+            setTimeout(() => { _affClickPending = false; }, 2000);
         }
     }
 

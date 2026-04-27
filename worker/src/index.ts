@@ -272,10 +272,11 @@ const worker = {
           env.DB.prepare("DELETE FROM score_history WHERE rescored_at < datetime('now', '-180 days')"),
           env.DB.prepare("DELETE FROM source_metrics WHERE date < date('now', '-90 days')"),
           env.DB.prepare("DELETE FROM curation_logs WHERE created_at < datetime('now', '-60 days')"),
+          env.DB.prepare("DELETE FROM affiliate_clicks WHERE clicked_at < datetime('now', '-365 days')"),
         ]);
         const deleted = cleanups.map(r => r.meta.changes || 0);
         const total = deleted.reduce((a, b) => a + b, 0);
-        console.log(`D1 cleanup: ${total} rows deleted (api_usage:${deleted[0]}, events:${deleted[1]}, score_history:${deleted[2]}, source_metrics:${deleted[3]}, curation_logs:${deleted[4]})`);
+        console.log(`D1 cleanup: ${total} rows deleted (api_usage:${deleted[0]}, events:${deleted[1]}, score_history:${deleted[2]}, source_metrics:${deleted[3]}, curation_logs:${deleted[4]}, affiliate_clicks:${deleted[5]})`);
         if (total > 0) logEvent(env, 'ttl_cleanup', null, `D1 TTL cleanup: ${total} rows deleted`);
       } catch (e) {
         console.error('D1 TTL cleanup error:', e);
@@ -598,26 +599,33 @@ const worker = {
     if (path === '/api/admin/affiliate-stats' && request.method === 'GET') {
       const [user, err] = await requireAdmin(request, env);
       if (err) return err;
-      const [total, today, week, byRegistrar, byDomain, byDay, domainViews] = await Promise.all([
-        env.DB.prepare('SELECT COUNT(*) as c FROM affiliate_clicks').first<{c:number}>(),
-        env.DB.prepare("SELECT COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-1 day')").first<{c:number}>(),
-        env.DB.prepare("SELECT COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-7 days')").first<{c:number}>(),
-        env.DB.prepare('SELECT registrar, COUNT(*) as c FROM affiliate_clicks GROUP BY registrar ORDER BY c DESC').all(),
-        env.DB.prepare('SELECT domain, COUNT(*) as c FROM affiliate_clicks GROUP BY domain ORDER BY c DESC LIMIT 20').all(),
-        env.DB.prepare("SELECT date(clicked_at) as d, COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-30 days') GROUP BY d ORDER BY d ASC").all(),
-        env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'available'").first<{c:number}>(),
+      // M3 fix: use env.DB.batch() for single D1 round-trip
+      const results = await env.DB.batch([
+        env.DB.prepare('SELECT COUNT(*) as c FROM affiliate_clicks'),
+        env.DB.prepare("SELECT COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-1 day')"),
+        env.DB.prepare("SELECT COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-7 days')"),
+        env.DB.prepare('SELECT registrar, COUNT(*) as c FROM affiliate_clicks GROUP BY registrar ORDER BY c DESC'),
+        env.DB.prepare('SELECT domain, COUNT(*) as c FROM affiliate_clicks GROUP BY domain ORDER BY c DESC LIMIT 20'),
+        env.DB.prepare("SELECT date(clicked_at) as d, COUNT(*) as c FROM affiliate_clicks WHERE clicked_at > datetime('now', '-30 days') GROUP BY d ORDER BY d ASC"),
+        env.DB.prepare("SELECT COUNT(*) as c FROM domains WHERE availability_status = 'available'"),
+        // S4 fix: count unique IPs that saw the click endpoint as proxy for impressions
+        env.DB.prepare("SELECT COUNT(DISTINCT user_id) as c FROM affiliate_clicks"),
       ]);
-      const totalClicks = total?.c || 0;
-      const availDomains = domainViews?.c || 0;
+      const totalClicks = (results[0].results?.[0] as any)?.c || 0;
+      const todayClicks = (results[1].results?.[0] as any)?.c || 0;
+      const weekClicks = (results[2].results?.[0] as any)?.c || 0;
+      const availDomains = (results[6].results?.[0] as any)?.c || 0;
+      const uniqueClickers = (results[7].results?.[0] as any)?.c || 0;
       return json({
         total: totalClicks,
-        today: today?.c || 0,
-        this_week: week?.c || 0,
+        today: todayClicks,
+        this_week: weekClicks,
         available_domains: availDomains,
-        ctr_estimate: availDomains > 0 ? `${((totalClicks / Math.max(availDomains, 1)) * 100).toFixed(1)}%` : 'N/A',
-        by_registrar: byRegistrar.results || [],
-        top_domains: byDomain.results || [],
-        daily: byDay.results || [],
+        unique_clickers: uniqueClickers,
+        clicks_per_domain: availDomains > 0 ? parseFloat((totalClicks / availDomains).toFixed(2)) : 0,
+        by_registrar: results[3].results || [],
+        top_domains: results[4].results || [],
+        daily: results[5].results || [],
       });
     }
 
@@ -3675,9 +3683,9 @@ ${d.predicted_price_usd ? `<div class="stat"><div class="v" style="color:#34d399
 </div>
 
 ${d.availability_status === 'available' ? `<div style="margin:24px 0;display:flex;gap:12px;flex-wrap:wrap;">
-<a href="https://www.cloudflare.com/products/registrar/?domain=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-primary" onclick="fetch('/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'cloudflare',referrer:location.pathname}),credentials:'include'})">Register at Cloudflare</a>
-<a href="https://www.namecheap.com/domains/registration/results/?domain=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-outline" onclick="fetch('/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'namecheap',referrer:location.pathname}),credentials:'include'})">Namecheap</a>
-<a href="https://porkbun.com/checkout/search?q=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-outline" onclick="fetch('/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'porkbun',referrer:location.pathname}),credentials:'include'})">Porkbun</a>
+<a href="https://www.cloudflare.com/products/registrar/?domain=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-primary" onclick="fetch('https://eyecx-api.kjssamsungdev.workers.dev/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'cloudflare',referrer:location.pathname}),credentials:'include'})">Register at Cloudflare</a>
+<a href="https://www.namecheap.com/domains/registration/results/?domain=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-outline" onclick="fetch('https://eyecx-api.kjssamsungdev.workers.dev/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'namecheap',referrer:location.pathname}),credentials:'include'})">Namecheap</a>
+<a href="https://porkbun.com/checkout/search?q=${encodeURIComponent(fqdn)}" target="_blank" rel="noopener" class="btn btn-outline" onclick="fetch('https://eyecx-api.kjssamsungdev.workers.dev/api/affiliate/click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:'${fqdn}',registrar:'porkbun',referrer:location.pathname}),credentials:'include'})">Porkbun</a>
 </div>` : ''}
 
 <h2 style="font-size:1.2rem;margin:24px 0 8px;">Why this domain?</h2>
