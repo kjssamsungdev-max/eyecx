@@ -452,3 +452,40 @@ jobs:
           for s in d.get('snapshots',[]):
               print(f\"  - {s['key']} ({s['size_mb']} MB)\")
           " >> $GITHUB_STEP_SUMMARY
+
+      - name: R2 retention cleanup (30 days)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          set -euo pipefail
+          R2_ENDPOINT="https://dbaac4c99956159d7594d90033b0224d.r2.cloudflarestorage.com"
+          CUTOFF=$(date -u -d "30 days ago" +%Y-%m-%d)
+          TODAY=$(date -u +%Y-%m-%d)
+          YESTERDAY=$(date -u -d "yesterday" +%Y-%m-%d)
+          DELETED=0
+
+          echo "R2 retention: deleting objects older than $CUTOFF (preserving $YESTERDAY + $TODAY)"
+
+          for PREFIX in snapshots dropped raw; do
+            OBJECTS=$(aws s3 ls "s3://eyecx-zones/${PREFIX}/" --recursive --endpoint-url "$R2_ENDPOINT" 2>/dev/null || echo "")
+            echo "$OBJECTS" | while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              KEY=$(echo "$line" | awk '{print $4}')
+              [ -z "$KEY" ] && continue
+              # Extract date from key (format: prefix/tld/tld_YYYY-MM-DD.ext)
+              FILE_DATE=$(echo "$KEY" | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
+              [ -z "$FILE_DATE" ] && continue
+              # Always preserve yesterday + today
+              [ "$FILE_DATE" = "$TODAY" ] && continue
+              [ "$FILE_DATE" = "$YESTERDAY" ] && continue
+              # Delete if older than cutoff
+              if [[ "$FILE_DATE" < "$CUTOFF" ]]; then
+                aws s3 rm "s3://eyecx-zones/${KEY}" --endpoint-url "$R2_ENDPOINT" --quiet 2>/dev/null && DELETED=$((DELETED + 1)) || true
+              fi
+            done
+          done
+
+          echo "## R2 Retention" >> $GITHUB_STEP_SUMMARY
+          echo "Cutoff: $CUTOFF | Deleted: $DELETED objects" >> $GITHUB_STEP_SUMMARY

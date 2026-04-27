@@ -202,6 +202,7 @@ export default {
       console.log(`RSS curation done: ${result.inserted} new, ${result.errors} errors`);
     } catch (e) {
       console.error('RSS curation error:', e);
+      await createAlert(env, 'cron_rss_failed', 'warning', `RSS curation failed: ${e}`).catch(() => {});
     }
 
     // Sales extraction runs after curation
@@ -211,6 +212,7 @@ export default {
       console.log(`Sales extraction done: ${sales.extracted} sales from ${sales.processed} articles`);
     } catch (e) {
       console.error('Sales extraction error:', e);
+      await createAlert(env, 'cron_sales_failed', 'warning', `Sales extraction failed: ${e}`).catch(() => {});
     }
 
     // Nightly rescore at 4 AM UTC
@@ -227,17 +229,38 @@ export default {
         ).bind(result.total, result.total).run();
       } catch (e) {
         console.error('Nightly rescore error:', e);
+        await createAlert(env, 'cron_rescore_failed', 'error', `Nightly rescore failed: ${e}`).catch(() => {});
       }
     }
 
-    // Self-tuning at 5 AM UTC (after rescore at 4 AM)
+    // D1 TTL cleanup at 5 AM UTC (before self-tuning)
     if (hour === 5) {
+      try {
+        console.log('D1 TTL cleanup starting...');
+        const cleanups = await env.DB.batch([
+          env.DB.prepare("DELETE FROM api_usage WHERE ts < datetime('now', '-30 days')"),
+          env.DB.prepare("DELETE FROM events WHERE ts < datetime('now', '-90 days')"),
+          env.DB.prepare("DELETE FROM score_history WHERE rescored_at < datetime('now', '-180 days')"),
+          env.DB.prepare("DELETE FROM source_metrics WHERE date < date('now', '-90 days')"),
+          env.DB.prepare("DELETE FROM curation_logs WHERE created_at < datetime('now', '-60 days')"),
+        ]);
+        const deleted = cleanups.map(r => r.meta.changes || 0);
+        const total = deleted.reduce((a, b) => a + b, 0);
+        console.log(`D1 cleanup: ${total} rows deleted (api_usage:${deleted[0]}, events:${deleted[1]}, score_history:${deleted[2]}, source_metrics:${deleted[3]}, curation_logs:${deleted[4]})`);
+        if (total > 0) logEvent(env, 'ttl_cleanup', null, `D1 TTL cleanup: ${total} rows deleted`);
+      } catch (e) {
+        console.error('D1 TTL cleanup error:', e);
+        await createAlert(env, 'cron_cleanup_failed', 'warning', `D1 TTL cleanup failed: ${e}`).catch(() => {});
+      }
+
+      // Self-tuning (after cleanup)
       try {
         console.log('Self-tuning starting...');
         const result = await runSelfTuning(env);
         console.log(`Self-tuning done: ${result.tlds_processed} TLDs, ${result.changes} weight changes, ${result.tlds_skipped} skipped (insufficient data)`);
       } catch (e) {
         console.error('Self-tuning error:', e);
+        await createAlert(env, 'cron_tuning_failed', 'warning', `Self-tuning failed: ${e}`).catch(() => {});
       }
     }
 
@@ -252,6 +275,7 @@ export default {
         console.log(`Discovery: ${discovery.scanned} sites scanned, ${discovery.candidates} new candidates`);
       } catch (e) {
         console.error('Health/alerts/discovery error:', e);
+        await createAlert(env, 'cron_health_failed', 'warning', `Health/alerts/discovery failed: ${e}`).catch(() => {});
       }
     }
 
@@ -277,6 +301,7 @@ export default {
         }
       } catch (e) {
         console.error('CZDS cron error:', e);
+        await createAlert(env, 'cron_czds_failed', 'warning', `CZDS cron failed: ${e}`).catch(() => {});
       }
     }
   },
