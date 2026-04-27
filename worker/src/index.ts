@@ -1510,13 +1510,26 @@ const worker = {
 
     // POST /api/affiliate/click - Log affiliate click and redirect to registrar
     if (path === '/api/affiliate/click' && request.method === 'POST') {
-      const { domain, registrar, referrer } = await request.json() as { domain: string; registrar?: string; referrer?: string };
+      let body: { domain?: string; registrar?: string; referrer?: string };
+      try { body = await request.json() as any; } catch { return error('Invalid JSON', 400); }
+      const { domain, registrar, referrer } = body;
       if (!domain || !FQDN_RE.test(domain.toLowerCase())) return error('Valid domain required');
+
+      // C2 fix: validate registrar against allowlist
+      const VALID_REGISTRARS = ['cloudflare', 'namecheap', 'porkbun'];
+      const reg = VALID_REGISTRARS.includes(registrar || '') ? registrar! : 'cloudflare';
+
+      // C1 fix: per-IP rate limit (10 clicks/minute) via D1 check
+      const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const recentClicks = await env.DB.prepare(
+        "SELECT COUNT(*) as c FROM affiliate_clicks WHERE user_id = ? AND clicked_at > datetime('now', '-1 minute')"
+      ).bind(`ip:${ip}`).first<{c:number}>();
+      if ((recentClicks?.c || 0) >= 10) return error('Rate limit exceeded. Try again in a minute.', 429);
+
       const tld = '.' + domain.split('.').pop();
-      const reg = registrar || 'cloudflare';
 
       // Extract user_id from session cookie if present (optional, no auth required)
-      let userId: string | null = null;
+      let userId: string | null = `ip:${ip}`;
       const cookie = request.headers.get('Cookie') || '';
       const cookieMatch = cookie.match(/eyecx_session=([^;]+)/);
       if (cookieMatch) {
@@ -1524,9 +1537,12 @@ const worker = {
         if (sess) userId = sess.user_id;
       }
 
+      // S2 fix: truncate referrer
+      const safeReferrer = referrer ? referrer.slice(0, 500) : null;
+
       await env.DB.prepare(
         'INSERT INTO affiliate_clicks (domain, tld, registrar, referrer_page, user_id) VALUES (?, ?, ?, ?, ?)'
-      ).bind(domain.toLowerCase(), tld, reg, referrer || null, userId).run();
+      ).bind(domain.toLowerCase(), tld, reg, safeReferrer, userId).run();
 
       // Build registrar redirect URL
       const redirectUrls: Record<string, string> = {
